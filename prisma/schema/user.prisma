@@ -1,18 +1,39 @@
 model User {
-  id                 String     @id @default(uuid())
+  id                 String       @id @default(uuid())
   name               String
   email              String
-  password           String
-  emailVerified      Boolean    @default(false)
-  role               Role       @default(PATIENT)
-  status             UserStatus @default(ACTIVE)
-  needPasswordChange Boolean    @default(false)
-  isDeleted          Boolean    @default(false)
-  deletedAt          DateTime?
-  createdAt          DateTime   @default(now())
-  updatedAt          DateTime   @updatedAt
-  patient            Patient?
+  password           String?
+  googleId           String?      @unique
+  authProvider       AuthProvider @default(CREDENTIAL)
+  emailVerified      Boolean      @default(false)
+  role               Role         @default(CUSTOMER)
+  status             UserStatus   @default(ACTIVE)
+  needPasswordChange Boolean      @default(false)
 
+  
+  //address (single — Option A)
+  addressLine        String?
+  city               String?
+  district           String?
+  postalCode         String?
+
+  isDeleted          Boolean      @default(false)
+  deletedAt          DateTime?
+  createdAt          DateTime     @default(now())
+  updatedAt          DateTime     @updatedAt
+
+  //relations
+  technician             TechnicianProfile?
+  technicianApplications TechnicianApplication[]
+  serviceRequests        ServiceRequest[]
+  notifications          Notification[]
+  auditLogs              AuditLog[]
+  customerFeedbacks      Feedback[]              @relation("CustomerFeedback")
+
+
+
+ 
   @@unique([email])
+  @@index([role], name: "idx_user_role")
   @@map("users")
 }

@@ -1,0 +1,18 @@
+model Appointment {
+  id        String            @id @default(uuid())
+  startTime DateTime          @db.Timestamptz(6)
+  endTime   DateTime          @db.Timestamptz(6)
+  status    AppointmentStatus @default(SCHEDULED)
+  isDeleted Boolean           @default(false)
+  deletedAt DateTime?
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
+
+  //relations
+  assignmentId String     @unique
+  assignment   Assignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@index([startTime, endTime], name: "idx_appointment_time")
+  @@map("appointments")
+}
+

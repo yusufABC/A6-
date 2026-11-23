@@ -1,0 +1,15 @@
+model AuditLog {
+  id         String   @id @default(uuid())
+  action     String
+  entityType String
+  entityId   String
+  metadata   Json? // e.g. { reason, oldTechnicianId, newTechnicianId }
+  createdAt  DateTime @default(now())
+
+  //relations
+  userId String?
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  @@index([entityType, entityId], name: "idx_audit_entity")
+  @@map("audit_logs")
+}

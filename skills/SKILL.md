@@ -612,5 +612,627 @@ One file per integration, each exporting a singleton client:
 10. Analytics revenue/refund aggregates are identical queries; compute both
     sides properly. Import generated enums/models consistently from
     `generated/prisma/enums` (not `generated/prisma/browser`).
-11. Seed functions delete users in their catch block (dangerous) — make
     seeds idempotent and non-destructive.
+
+---
+
+# FSMS Domain Knowledge (Sections 14–21)
+
+> These sections describe WHAT to build for the Field Service Management
+> System assignment. Sections 1–13 describe HOW to build it. Both must be
+> read together. The authoritative sources are:
+> - `requirement-analysis.md` — full business rules & workflows
+> - `database_model_relations.md` — Prisma schema + worked example
+> - `api_endpoints.md` — role-scoped endpoint list
+
+## 14. FSMS Roles & Authorization Matrix
+
+The system has **four roles** (not three like Healthcare):
+
+| Role | Enum | Key Capability |
+| --- | --- | --- |
+| Customer | `CUSTOMER` | Creates service requests, pays invoices, submits feedback, can apply to become a Technician |
+| Technician | `TECHNICIAN` | Accepts/rejects assignments, sends estimates, submits service reports. **Also retains all Customer capabilities** (can create own requests, pay invoices, give feedback) |
+| Manager | `MANAGER` | Approves/declines requests, assigns technicians, schedules appointments, cancels work orders. Cannot manage users or approve Technician applications |
+| Admin | `ADMIN` | Superset of Manager + user management, Technician application approvals, service catalog management, full audit log access |
+
+### Role Registration Rule
+- Users register as `CUSTOMER` only. The only path to `TECHNICIAN` is the application workflow (Section 17).
+- `MANAGER` and `ADMIN` accounts are seeded or promoted via Admin user-management endpoints; they cannot self-register.
+
+### Auth Guards Summary
+
+```
+Public (no JWT)         : /auth/*, GET /services, GET /technicians/:id, POST /payments/bkash/callback
+Any authenticated       : /users/me, /notifications, GET /health
+CUSTOMER or TECHNICIAN  : service-request creation, estimate decisions, bKash checkout, feedback
+TECHNICIAN only         : assignment accept/reject, mark arrival, submit estimate, submit report
+MANAGER or ADMIN        : request approve/decline, assignment dispatch, scheduling, work-order cancel
+ADMIN only              : user management, Technician application review, service catalog CRUD, audit logs
+```
+
+Row-level ownership is enforced **in the service layer** after the role check.
+A customer can only read/modify their own service requests, invoices, and payments.
+A technician can only act on their own assigned jobs.
+Unauthorized access returns `403` or `404` per disclosure policy (never leak existence).
+
+---
+
+## 15. FSMS Status Machines
+
+**Read these tables before writing any service that changes a status.
+Every transition must be validated; throw `AppError(400, "Invalid status transition")` for illegal moves.**
+
+### 15.1 ServiceRequest Status
+
+```
+PENDING_REVIEW  ->  APPROVED | DECLINED | CANCELLED
+APPROVED        ->  COMPLETED | CLOSED_NO_WORK | CANCELLED
+DECLINED        ->  (terminal)
+COMPLETED       ->  (terminal)
+CLOSED_NO_WORK  ->  (terminal)
+CANCELLED       ->  (terminal)
+```
+
+**Rule:** ServiceRequest status is NEVER updated directly. It only changes inside
+the same DB transaction as the WorkOrder terminal transition:
+- WorkOrder `COMPLETED`       -> ServiceRequest `COMPLETED`
+- WorkOrder `CLOSED_NO_WORK`  -> ServiceRequest `CLOSED_NO_WORK`
+- WorkOrder `CANCELLED`       -> ServiceRequest `CANCELLED`
+
+### 15.2 WorkOrder Status (11 states)
+
+```
+AWAITING_ASSIGNMENT        ->  ASSIGNED | CANCELLED
+ASSIGNED                   ->  SCHEDULED | AWAITING_ASSIGNMENT (tech rejects) | CANCELLED
+SCHEDULED                  ->  ARRIVED | AWAITING_ASSIGNMENT (tech replaced) | CANCELLED
+ARRIVED                    ->  AWAITING_ESTIMATE_APPROVAL | CANCELLED
+AWAITING_ESTIMATE_APPROVAL ->  ESTIMATE_APPROVED | CLOSED_NO_WORK | CANCELLED
+ESTIMATE_APPROVED          ->  IN_PROGRESS | CLOSED_NO_WORK | CANCELLED
+IN_PROGRESS                ->  AWAITING_ESTIMATE_APPROVAL (mid-job revision) | WORK_COMPLETED | CANCELLED
+WORK_COMPLETED             ->  COMPLETED  (only via successful payment callback)
+COMPLETED                  ->  (terminal)
+CLOSED_NO_WORK             ->  (terminal)
+CANCELLED                  ->  (terminal)
+```
+
+Key rules:
+- `WORK_COMPLETED` -> `COMPLETED` happens ONLY inside the bKash success transaction.
+- `CLOSED_NO_WORK` is only valid when no work has started (never after `IN_PROGRESS` was reached).
+
+### 15.3 Assignment Status
+
+```
+PENDING   ->  ACCEPTED | REJECTED | CANCELLED
+ACCEPTED  ->  CANCELLED
+REJECTED  ->  (pending reassignment: Manager updates same row, resets to PENDING)
+CANCELLED ->  (terminal)
+```
+
+One assignment row per WorkOrder (`UNIQUE(workOrderId)`). Reassignment = UPDATE same row (never INSERT a new one). When assignment is `REJECTED` or `CANCELLED`, its linked Appointment is also set to `CANCELLED`.
+
+### 15.4 Estimate Status
+
+```
+SENT               ->  REVISION_REQUESTED | APPROVED | REJECTED | EXPIRED
+REVISION_REQUESTED ->  SUPERSEDED  (when technician sends next version)
+SUPERSEDED         ->  (terminal)
+APPROVED           ->  SUPERSEDED  (when a newer version is approved)
+REJECTED           ->  (terminal)
+EXPIRED            ->  (technician can send new version; WO stays AWAITING_ESTIMATE_APPROVAL)
+```
+
+Rules:
+- Exactly ONE `SENT` estimate per WorkOrder at a time.
+- Each new version auto-increments `versionNumber` per WorkOrder.
+- Approving a new version marks the previously `APPROVED` version as `SUPERSEDED`.
+- Mid-job revision: technician can send a new estimate while WO is `IN_PROGRESS`; WO transitions back to `AWAITING_ESTIMATE_APPROVAL`.
+- If the customer rejects a mid-job revision, the technician completes using the **last approved estimate** — the WO does NOT go to `CLOSED_NO_WORK`.
+
+### 15.5 Invoice Status
+
+```
+UNPAID  ->  PAID  (only inside the bKash success transaction; immutable after PAID)
+```
+
+No void, no delete, no partial payment. One invoice per WorkOrder.
+
+### 15.6 Payment Status
+
+```
+UNPAID    ->  PAID | FAILED | CANCELLED
+PAID      ->  (terminal)
+FAILED    ->  (customer retries by creating a new Payment row)
+CANCELLED ->  (timeout: only after bKash Query API confirms no success)
+```
+
+### 15.7 Appointment Status
+
+```
+SCHEDULED  ->  CANCELLED
+```
+
+Rescheduling updates `startTime`/`endTime` on the same row (no new row). An audit log entry records the change.
+
+### 15.8 TechnicianApplication Status
+
+```
+PENDING   ->  APPROVED | REJECTED
+APPROVED  ->  (terminal: atomic User.role->TECHNICIAN + TechnicianProfile created)
+REJECTED  ->  user may submit a new application (new row)
+```
+
+---
+
+## 16. FSMS Database Model Overview
+
+### Entity Groups & Prisma Files
+
+| Prisma file | Models |
+| --- | --- |
+| `enums.prisma` | `Role`, `UserStatus`, `AuthProvider`, `ServiceRequestStatus`, `WorkOrderStatus`, `AssignmentStatus`, `AppointmentStatus`, `EstimateStatus`, `EstimateItemType`, `InvoiceStatus`, `PaymentStatus`, `TechnicianApplicationStatus`, `NotificationCategory` |
+| `user.prisma` | `User` |
+| `technician.prisma` | `TechnicianProfile`, `TechnicianApplication` |
+| `service.prisma` | `Service` |
+| `request.prisma` | `ServiceRequest` |
+| `workorder.prisma` | `WorkOrder`, `Assignment`, `Appointment` |
+| `estimate.prisma` | `Estimate`, `EstimateItem` |
+| `report.prisma` | `ServiceReport`, `ServiceReportItem` |
+| `invoice.prisma` | `Invoice`, `InvoiceItem`, `Payment` |
+| `feedback.prisma` | `Feedback` |
+| `notification.prisma` | `Notification` |
+| `audit.prisma` | `AuditLog` |
+
+### Key Relation Chain
+
+```
+User 1-1 TechnicianProfile 1-N Assignment
+User 1-N ServiceRequest 1-1 WorkOrder 1-1 Assignment 1-1 Appointment
+                                       WorkOrder 1-N Estimate 1-N EstimateItem
+                                       WorkOrder 1-1 ServiceReport 1-N ServiceReportItem
+                                       WorkOrder 1-1 Invoice 1-N InvoiceItem
+                                       Invoice   1-N Payment
+                                       WorkOrder 1-1 Feedback
+```
+
+### Critical Schema Notes
+
+- **Address:** flat fields on `User` (`addressLine`, `city`, `district`, `postalCode`). No `Address` table.
+- **Skills:** `Json?` on `TechnicianProfile` and `TechnicianApplication`. No `Skill` or join table.
+- **Files:** stored as `Json?` arrays `[{ url, publicId }]` on the parent row (`attachments` on `ServiceRequest` and `ServiceReport`; `resume`/`resumePublicId`/`additionalFiles` on `TechnicianApplication`). No `Attachment` table.
+- **ServiceRequest address snapshot:** when creating a request, copy the user's current address into `serviceAddressLine`, `serviceCity`, `serviceDistrict`, `servicePostalCode` on the request row. These never change after creation.
+- **Service snapshot:** also copy `service.name` -> `serviceNameSnapshot` and `service.basePriceAmount` -> `basePriceSnapshot` at request creation time.
+- **Soft delete scope:** `User`, `TechnicianProfile`, `TechnicianApplication`, `Service`, `ServiceRequest`, `WorkOrder`, `Assignment`, `Appointment`, `Estimate`, `EstimateItem`, `ServiceReport`, `ServiceReportItem`, `Feedback`, `Notification` have `isDeleted` + `deletedAt`.
+- **No soft delete:** `Invoice`, `InvoiceItem`, `Payment`, `AuditLog` are immutable financial/audit records — never deleted.
+- **Decimal money:** ALL monetary fields use `Decimal @db.Decimal(12,2)` in BDT. Never `Float`.
+
+### Unique Constraints to Enforce in Service Layer (row locks)
+
+1. One active (`PENDING`) TechnicianApplication per user -> `SELECT ... FOR UPDATE` on `User` row.
+2. One `APPROVED` Estimate per WorkOrder -> `SELECT ... FOR UPDATE` on `WorkOrder` row; approving new version marks old `APPROVED` as `SUPERSEDED`.
+3. One successful Payment per Invoice -> lock `Invoice` row in bKash callback; replay returns success (idempotent), no error.
+
+---
+
+## 17. FSMS Business Rules (read before coding each module)
+
+### Registration & Auth
+
+- Registration creates a `CUSTOMER`. Email verification via OTP (6-digit, Redis, 5-min TTL) before the account is active.
+- Google OAuth: use `googleId` (`payload.sub`) to link or create accounts. `password` may be `null` for Google users — branch on `authProvider` before `bcrypt.compare`.
+- `checkAuth` must reject: invalid/expired token, wrong role, `status === SUSPENDED`, `status === DELETED`, `isDeleted === true`.
+- After Admin approves a Technician application, the user's existing JWT is stale (role is still `CUSTOMER`). They must re-login for the `TECHNICIAN` role in the token.
+
+### Service Catalog
+
+- `basePriceAmount` is display-only; actual cost comes from the technician's estimate.
+- `estimatedDurationMinutes` is used by Manager/Admin to compute default appointment `endTime = startTime + estimatedDurationMinutes`. Manager can override.
+- Skill matching: compare `Service.requiredSkill` against `TechnicianProfile.skills` (JSON array) using `trim().toLowerCase()` on both sides.
+
+### Service Request Creation
+
+1. Verify `serviceId` exists and `isActive && !isDeleted`.
+2. Snapshot `serviceNameSnapshot`, `basePriceSnapshot`, and all four address fields from the user's current profile.
+3. Upload any fault photos to Cloudinary, store `[{ url, publicId }]` in `attachments`.
+4. Create the `ServiceRequest` row in `PENDING_REVIEW`.
+5. Write `AuditLog` entry (`REQUEST_CREATED`).
+
+### Request Approval (Manager/Admin)
+
+- Approving creates a `WorkOrder` in `AWAITING_ASSIGNMENT` and updates `ServiceRequest` to `APPROVED` **in one transaction**.
+- Notify the customer. Write `AuditLog` (`REQUEST_APPROVED`).
+- Declining writes the reason to `AuditLog.metadata` (`{ "reason": "..." }`) — there is **no** `declineReason` column on `ServiceRequest`. Updates `ServiceRequest` to `DECLINED`.
+
+### Assignment & Scheduling (Manager/Admin)
+
+When assigning a technician:
+
+1. Verify `WorkOrder` is `AWAITING_ASSIGNMENT`.
+2. Guard: technician `status !== SUSPENDED`, `!isDeleted`.
+3. **Self-assignment guard:** the technician's `userId` must NOT equal the `customerId` on the linked `ServiceRequest`.
+4. Create (or UPDATE if reassigning) the `Assignment` row to `PENDING`.
+5. Create the `Appointment` with `startTime`/`endTime`.
+6. Run overlap check inside the transaction + advisory lock (see Section 18).
+7. Update `WorkOrder` to `ASSIGNED`.
+8. Write `AuditLog` (`TECHNICIAN_ASSIGNED`). Notify customer + technician.
+
+Reassigning: UPDATE the **same** `Assignment` row (new `technicianId`, status reset to `PENDING`, new Appointment times). Write `AuditLog` (`ASSIGNMENT_REPLACED`, `metadata: { oldTechnicianId, newTechnicianId }`).
+
+### Technician Accept / Reject
+
+- **Accept:** `Assignment` -> `ACCEPTED`, `WorkOrder` -> `SCHEDULED`. Notify customer. Write `AuditLog` (`ASSIGNMENT_ACCEPTED`).
+- **Reject:** `Assignment` -> `REJECTED`, linked `Appointment` -> `CANCELLED`, `WorkOrder` -> `AWAITING_ASSIGNMENT`. Body: `rejectionReason`. Notify customer + Manager/Admin. Write `AuditLog` (`ASSIGNMENT_REJECTED`, `metadata: { reason }`).
+
+### Estimate Flow (Technician)
+
+- Technician sends estimate after marking arrival (WorkOrder must be `ARRIVED` for first estimate, or `IN_PROGRESS` for mid-job revision).
+- Each estimate is cumulative (restates entire scope, not just delta).
+- Auto-increment `versionNumber` per WorkOrder: `MAX(versionNumber) + 1`.
+- If a `SENT` estimate already exists, mark it `SUPERSEDED` before inserting the new one.
+- `WorkOrder` -> `AWAITING_ESTIMATE_APPROVAL`. Notify customer. Write `AuditLog` (`ESTIMATE_SENT`).
+
+### Estimate Decisions (Customer)
+
+- **Approve:** Current estimate -> `APPROVED`. If a previous `APPROVED` exists, mark it `SUPERSEDED`. `WorkOrder` -> `ESTIMATE_APPROVED`. Notify technician. Write `AuditLog` (`ESTIMATE_APPROVED`).
+- **Request Revision:** Current estimate -> `REVISION_REQUESTED`. WorkOrder stays `AWAITING_ESTIMATE_APPROVAL`. Notify technician. Write `AuditLog` (`ESTIMATE_REVISION_REQUESTED`).
+- **Reject:** Current estimate -> `REJECTED`.
+  - If work has NOT started (WO was not yet `IN_PROGRESS`): `WorkOrder` -> `CLOSED_NO_WORK`, `ServiceRequest` -> `CLOSED_NO_WORK`.
+  - If mid-job revision rejected: WO stays `IN_PROGRESS`, technician completes original approved scope.
+  - Notify technician. Write `AuditLog` (`ESTIMATE_REJECTED`).
+
+### Service Report & Work Completion (Technician)
+
+Technician submits report + marks `WORK_COMPLETED` in ONE transaction:
+
+1. Create `ServiceReport` + `ServiceReportItem` rows.
+2. Find the latest `APPROVED` Estimate for the WorkOrder.
+3. Auto-generate `Invoice` from that estimate: `InvoiceItem` rows copied from `EstimateItem`. Items with `customerProvided = true` get `lineTotal = 0`. `Invoice.totalAmount = SUM(lineTotal WHERE !customerProvided)`.
+4. Update `WorkOrder` -> `WORK_COMPLETED`.
+5. Write `AuditLog` (`WORK_ORDER_COMPLETED`, `INVOICE_GENERATED`).
+6. Notify customer (`COMPLETION` category).
+
+### Feedback
+
+- Guard: `Invoice.status === 'PAID'` AND no existing `Feedback` row for the `workOrderId`.
+- Rating applies to the technician on the `ACCEPTED` assignment (resolve via `Assignment.technicianId`).
+- One feedback per WorkOrder enforced by `UNIQUE(workOrderId)` schema constraint.
+- Average rating computed dynamically from `Feedback` on read — no cached columns.
+
+### Technician Application Workflow
+
+1. Customer submits application (multer multipart: `resume` file + `additionalFiles` + `data` JSON string).
+2. Guard: no active (`PENDING`) application for this user — `SELECT ... FOR UPDATE` on `User` row.
+3. Upload files to Cloudinary, store URLs/publicIds.
+4. Create `TechnicianApplication` row in `PENDING`. Write `AuditLog` (`TECHNICIAN_APPLICATION_SUBMITTED`).
+5. Admin approves (atomic transaction):
+   - `TechnicianApplication.status` -> `APPROVED`, set `reviewedBy`, `reviewedAt`, `reviewNote`.
+   - `User.role` -> `TECHNICIAN`.
+   - Create `TechnicianProfile` row (copy skills, serviceAreas, etc. from application).
+   - Write `AuditLog` (`TECHNICIAN_APPROVED`).
+6. Admin rejects: `reviewNote` is **required**. Write `AuditLog` (`TECHNICIAN_REJECTED`).
+
+### Audit Log Action Constants
+
+| Constant | Trigger |
+| --- | --- |
+| `REQUEST_CREATED` | Customer creates service request |
+| `REQUEST_APPROVED` | Manager/Admin approves request |
+| `REQUEST_DECLINED` | Manager/Admin declines request (reason in metadata) |
+| `REQUEST_CANCELLED` | Customer or Manager/Admin cancels |
+| `TECHNICIAN_ASSIGNED` | Manager/Admin assigns technician |
+| `ASSIGNMENT_ACCEPTED` | Technician accepts |
+| `ASSIGNMENT_REJECTED` | Technician rejects (reason in metadata) |
+| `ASSIGNMENT_REPLACED` | Manager/Admin reassigns (old/new technicianId in metadata) |
+| `ESTIMATE_SENT` | Technician sends estimate |
+| `ESTIMATE_REVISION_REQUESTED` | Customer requests revision |
+| `ESTIMATE_APPROVED` | Customer approves estimate |
+| `ESTIMATE_REJECTED` | Customer rejects estimate |
+| `WORK_ORDER_STARTED` | Technician starts work |
+| `WORK_ORDER_COMPLETED` | Technician marks work done |
+| `WORK_ORDER_CANCELLED` | Manager/Admin cancels (reason in metadata) |
+| `APPOINTMENT_SCHEDULED` | Appointment created |
+| `APPOINTMENT_RESCHEDULED` | Times updated (old times in metadata) |
+| `APPOINTMENT_CANCELLED` | Appointment cancelled |
+| `INVOICE_GENERATED` | System generates invoice |
+| `PAYMENT_STARTED` | Customer initiates bKash checkout |
+| `PAYMENT_PAID` | bKash callback confirms payment |
+| `PAYMENT_FAILED` | bKash reports failure |
+| `USER_SUSPENDED` | Admin suspends user |
+| `USER_ACTIVATED` | Admin reactivates user |
+| `USER_ROLE_UPDATED` | Admin changes user role |
+| `RECORD_DELETED` | Admin soft-deletes a record |
+| `TECHNICIAN_APPLICATION_SUBMITTED` | Customer submits application |
+| `TECHNICIAN_APPROVED` | Admin approves application |
+| `TECHNICIAN_REJECTED` | Admin rejects application |
+
+Write audit entries inside the same transaction as the event. `userId` is the acting user's ID (`null` for system events like payment callbacks).
+
+### Notification Events
+
+| Trigger | Recipient(s) | Category |
+| --- | --- | --- |
+| Technician Assigned | Customer + Technician | `ASSIGNMENT` |
+| Assignment Accepted | Customer | `ASSIGNMENT` |
+| Assignment Rejected | Customer + Manager/Admin | `ASSIGNMENT` |
+| Assignment Replaced | Old Technician | `ASSIGNMENT` |
+| Estimate Sent | Customer | `ESTIMATE` |
+| Estimate Revision Requested | Technician | `ESTIMATE` |
+| Estimate Approved | Technician | `ESTIMATE` |
+| Estimate Rejected | Technician | `ESTIMATE` |
+| Payment Paid | Customer + Technician | `PAYMENT` |
+| Payment Failed | Customer | `PAYMENT` |
+| Work Completed (invoice issued) | Customer | `COMPLETION` |
+
+Create `Notification` rows inside the same transaction as the event. No external push or email in MVP — in-app only.
+
+---
+
+## 18. Appointment Overlap Check & Advisory Lock
+
+Every appointment create or reschedule must run inside `prisma.$transaction`:
+
+```ts
+// Step 1: acquire per-technician advisory lock FIRST
+await tx.$executeRaw`SELECT pg_advisory_xact_lock(4242, hashtext(${technicianId}::text))`;
+
+// Step 2: overlap check
+const conflict = await tx.appointment.findFirst({
+  where: {
+    assignment: { technicianId, isDeleted: false },
+    status: { not: "CANCELLED" },
+    isDeleted: false,
+    startTime: { lt: newEndTime },
+    endTime: { gt: newStartTime },
+  },
+});
+if (conflict) throw new AppError(httpStatus.CONFLICT, "Technician has a conflicting appointment");
+
+// Step 3: create/update appointment row
+```
+
+Pass `{ maxWait: 10000, timeout: 30000 }` on this transaction because the advisory lock may wait.
+
+---
+
+## 19. bKash Payment Flow
+
+### Checkout Initiation (Customer)
+
+1. Verify `Invoice.status === 'UNPAID'` and no active `UNPAID` payment for this invoice.
+2. Generate a unique `idempotencyKey` (UUID) **before** calling bKash.
+3. Create a `Payment` row: `status: 'UNPAID'`, `idempotencyKey`, `amount = invoice.totalAmount`.
+4. Write `AuditLog` (`PAYMENT_STARTED`).
+5. Call bKash Create Payment API -> get `bkashURL` and `paymentID`.
+6. Store `bkashPaymentId` on the Payment row.
+7. Return `{ bkashURL }` to client — the client redirects the user to bKash.
+
+### Callback (bKash -> Backend — PUBLIC route, NO JWT)
+
+Never trust the callback body for amount or status. Always call the bKash Execute/Query API to verify.
+
+Idempotency logic:
+
+1. Find `Payment` by `bkashPaymentId`. If already `PAID`, return success without writing (replayed callback).
+2. Call bKash Execute/Query API to verify payment status.
+3. If confirmed `PAID` (atomic transaction):
+   - Lock `Invoice` row (`SELECT ... FOR UPDATE`). If `Invoice.status === 'PAID'` already, return success (concurrent replay).
+   - `Payment.status` -> `PAID`, set `bkashTrxId`, `paidAt`, `gatewayResponse`.
+   - `Invoice.status` -> `PAID`, set `paidAt`.
+   - `WorkOrder.status` -> `COMPLETED`.
+   - `ServiceRequest.status` -> `COMPLETED`.
+   - Write `AuditLog` (`PAYMENT_PAID`).
+   - Create `Notification` rows for customer + technician (`PAYMENT` category).
+4. If `FAILED` or `CANCELLED` by user: `Payment.status` -> `FAILED` or `CANCELLED`. Write `AuditLog`.
+5. Respond with `res.redirect(frontendCallbackUrl + "?status=success/failed")`.
+
+### Timeout Safety (30-min bKash session)
+
+Before cancelling a timed-out `UNPAID` payment: call bKash Query Payment API first. Only cancel if bKash returns no success. This prevents cancelling a payment that bKash confirmed but whose callback was delayed.
+
+### Retry
+
+Customer retries a failed/abandoned checkout by calling the checkout endpoint again on the same invoice. A new `Payment` row is created with a new `idempotencyKey`.
+
+---
+
+## 20. FSMS API Endpoint Catalog
+
+Mount all modules under `/api/v1`. Every endpoint maps to a module in `src/app/module/`.
+
+### Auth (`/api/v1/auth`)
+
+| Method | Path | Roles | Notes |
+| --- | --- | --- | --- |
+| POST | `/register` | Public | Creates CUSTOMER; triggers email OTP |
+| POST | `/verify-email` | Public | OTP verification; activates account |
+| POST | `/login` | Public | Returns access + refresh tokens |
+| POST | `/google` | Public | Google OAuth login/register |
+| POST | `/refresh-token` | Public (cookie) | Rotates token pair |
+| POST | `/forgot-password` | Public | Sends reset OTP |
+| POST | `/reset-password` | Public | Resets password with OTP |
+
+### Users (`/api/v1/users`)
+
+| Method | Path | Roles | Notes |
+| --- | --- | --- | --- |
+| GET | `/me` | Any auth | Own profile |
+| PATCH | `/me` | Any auth | Update name, phone |
+| PATCH | `/me/address` | Any auth | Update single saved address |
+| PATCH | `/me/password` | Any auth | Change password |
+| POST | `/me/profile-image` | Any auth | Multer + Cloudinary upload |
+| GET | `/` | ADMIN | All users, paginated + filterable |
+| GET | `/:id` | ADMIN | Single user |
+| PATCH | `/:id/suspend` | ADMIN | Suspend user (audit log) |
+| PATCH | `/:id/activate` | ADMIN | Reactivate user |
+| PATCH | `/:id/role` | ADMIN | Change user role (audit log) |
+| DELETE | `/:id` | ADMIN | Soft delete user |
+
+### Services (`/api/v1/services`)
+
+| Method | Path | Roles | Notes |
+| --- | --- | --- | --- |
+| GET | `/` | Public | Active, non-deleted catalog |
+| GET | `/:id` | Public | Single service detail |
+| GET | `/all` | ADMIN | All including inactive/deleted |
+| POST | `/` | ADMIN | Create service |
+| PATCH | `/:id` | ADMIN | Update price/skill/duration |
+| DELETE | `/:id` | ADMIN | Soft delete |
+
+### Service Requests (`/api/v1/service-requests`)
+
+| Method | Path | Roles | Notes |
+| --- | --- | --- | --- |
+| POST | `/` | CUSTOMER, TECHNICIAN | Create (snapshot address + service) |
+| GET | `/` | CUSTOMER/TECH (own) or MANAGER/ADMIN (all) | Paginated + filterable |
+| GET | `/:id` | Own or MANAGER/ADMIN | With WorkOrder/Assignment embedded |
+| DELETE | `/:id` | Own or MANAGER/ADMIN | Cancel; restricted by status |
+| GET | `/:id/appointment` | CUSTOMER/TECH (own) | Scheduled visit read-only |
+| GET | `/:id/estimates` | CUSTOMER/TECH (own) | All estimate versions |
+| POST | `/:id/approve` | MANAGER, ADMIN | Approve -> creates WorkOrder |
+| POST | `/:id/decline` | MANAGER, ADMIN | Decline with reason (audit metadata) |
+
+### Estimates (`/api/v1/estimates`)
+
+| Method | Path | Roles | Notes |
+| --- | --- | --- | --- |
+| POST | `/:id/approve` | CUSTOMER, TECHNICIAN (own requests) | Approve estimate version |
+| POST | `/:id/revision` | CUSTOMER, TECHNICIAN (own requests) | Request revision |
+| POST | `/:id/reject` | CUSTOMER, TECHNICIAN (own requests) | Reject estimate |
+
+### Work Orders (`/api/v1/work-orders`)
+
+| Method | Path | Roles | Notes |
+| --- | --- | --- | --- |
+| GET | `/` | MANAGER, ADMIN | All work orders |
+| GET | `/:id` | MANAGER/ADMIN, TECH (own), CUSTOMER (own) | Full detail |
+| POST | `/:id/assignment` | MANAGER, ADMIN | Assign technician + schedule (advisory lock) |
+| POST | `/:id/arrive` | TECHNICIAN | Mark arrival |
+| POST | `/:id/estimates` | TECHNICIAN | Send estimate (new version) |
+| GET | `/:id/estimates` | TECH (own), MANAGER/ADMIN | All estimate versions |
+| POST | `/:id/start` | TECHNICIAN | Start work |
+| POST | `/:id/report` | TECHNICIAN | Submit report + complete + invoice generated |
+| GET | `/:id/invoice` | Own or MANAGER/ADMIN | Work order invoice |
+| POST | `/:id/feedback` | CUSTOMER, TECH (own requests) | Submit feedback |
+| POST | `/:id/cancel` | MANAGER, ADMIN | Cancel work order |
+
+### Assignments (`/api/v1/assignments`)
+
+| Method | Path | Roles | Notes |
+| --- | --- | --- | --- |
+| GET | `/` | TECH (own), MANAGER/ADMIN | Paginated |
+| GET | `/:id` | TECH (own), MANAGER/ADMIN | Single |
+| PATCH | `/:id` | MANAGER, ADMIN | Reassign (same row, overlap check) |
+| POST | `/:id/accept` | TECHNICIAN | Accept |
+| POST | `/:id/reject` | TECHNICIAN | Reject with reason |
+
+### Appointments (`/api/v1/appointments`)
+
+| Method | Path | Roles | Notes |
+| --- | --- | --- | --- |
+| PATCH | `/:id` | MANAGER, ADMIN | Reschedule (overlap check) |
+| DELETE | `/:id` | MANAGER, ADMIN | Cancel appointment |
+
+### Invoices (`/api/v1/invoices`)
+
+| Method | Path | Roles | Notes |
+| --- | --- | --- | --- |
+| GET | `/` | MANAGER, ADMIN | All invoices |
+| GET | `/:workOrderId` | Own or MANAGER/ADMIN | Invoice + items |
+| POST | `/:id/checkout` | CUSTOMER, TECH (own invoices) | Initiate bKash checkout |
+| GET | `/:id/payments` | Own or MANAGER/ADMIN | Payment attempt history |
+
+### Payments (`/api/v1/payments`)
+
+| Method | Path | Roles | Notes |
+| --- | --- | --- | --- |
+| POST | `/bkash/callback` | Public (bKash) | Verify + mark PAID; redirect to frontend |
+
+### Technician Applications (`/api/v1/technician-applications`)
+
+| Method | Path | Roles | Notes |
+| --- | --- | --- | --- |
+| POST | `/` | CUSTOMER | Submit (multipart) |
+| GET | `/me` | CUSTOMER | Own application history |
+| DELETE | `/:id` | CUSTOMER | Withdraw while PENDING |
+| GET | `/` | ADMIN | All, filterable by status |
+| POST | `/:id/approve` | ADMIN | Approve (atomic transaction) |
+| POST | `/:id/reject` | ADMIN | Reject (reviewNote required) |
+
+### Technicians (`/api/v1/technicians`)
+
+| Method | Path | Roles | Notes |
+| --- | --- | --- | --- |
+| GET | `/available` | MANAGER, ADMIN | Match by skill/area; excludes SUSPENDED |
+| GET | `/:id` | Public | Public profile + average rating |
+| GET | `/:id/feedbacks` | Public | Public reviews |
+| GET | `/me/profile` | TECHNICIAN | Own profile |
+| PATCH | `/me/profile` | TECHNICIAN | Update skills, serviceAreas, etc. |
+| GET | `/me/feedbacks` | TECHNICIAN | Own reviews |
+| GET | `/me/stats` | TECHNICIAN | Own stats |
+| GET | `/` | ADMIN | All technician profiles |
+| PATCH | `/:id` | ADMIN | Edit/soft-delete profile |
+
+### Notifications (`/api/v1/notifications`)
+
+| Method | Path | Roles | Notes |
+| --- | --- | --- | --- |
+| GET | `/` | Any auth | Own notifications (paginated) |
+| PATCH | `/:id/read` | Any auth | Mark one as read |
+| PATCH | `/read-all` | Any auth | Mark all as read |
+
+### Audit Logs (`/api/v1/audit-logs`)
+
+| Method | Path | Roles | Notes |
+| --- | --- | --- | --- |
+| GET | `/` | ADMIN | Full log, filterable by entityType/action |
+
+### Analytics (`/api/v1/analytics`)
+
+| Method | Path | Roles | Notes |
+| --- | --- | --- | --- |
+| GET | `/revenue` | ADMIN | Total revenue, by month |
+| GET | `/work-orders` | ADMIN, MANAGER | Work order counts by status |
+| GET | `/technician-performance` | ADMIN | Per-technician stats + avg rating |
+| GET | `/summary` | Any auth | Role-aware dashboard counts |
+
+---
+
+## 21. Assignment Requirements Checklist
+
+Tick off each item before submitting the assignment.
+
+### Security & Middleware
+
+- [ ] **Rate limiting:** `express-rate-limit` globally (100 req/15 min). Stricter on auth endpoints (5 req/15 min on `/login`, `/forgot-password`).
+- [ ] **Helmet:** `app.use(helmet())` in `app.ts` for security headers.
+- [ ] **CORS:** configured with allowed frontend origin from config.
+- [ ] **Password hashing:** bcrypt with `bcrypt_salt_rounds` from config. Never plaintext.
+- [ ] **Secrets:** never logged, never returned in responses (tokens in body are the allowed exception).
+- [ ] **Private routes:** every non-public endpoint protected with `auth(...)`.
+
+### Data & Performance
+
+- [ ] **API versioning:** all routes under `/api/v1/`.
+- [ ] **Soft deletes:** `isDeleted` + `deletedAt`; every list query filters `isDeleted: false`.
+- [ ] **Audit logs:** written for every critical action (see Section 17 table).
+- [ ] **Pagination:** at least one list endpoint supports `?page=1&limit=10`.
+- [ ] **Filtering/sorting:** at least one endpoint supports `?status=...&sortBy=createdAt`.
+- [ ] **Search:** at least one endpoint supports `?searchTerm=...`.
+- [ ] **DB indexing:** indexes on all frequently-filtered columns (already in schema).
+- [ ] **Transactions:** all multi-write operations in `prisma.$transaction`.
+- [ ] **Redis caching:** OTPs and bKash gateway tokens cached with TTL.
+
+### Business Logic
+
+- [ ] **4 roles** with strictly enforced RBAC (CUSTOMER, TECHNICIAN, MANAGER, ADMIN).
+- [ ] **Payment integration:** bKash (real payment flow; no fake status updates).
+- [ ] **Status state machines:** all transitions validated before writing.
+- [ ] **Business operations beyond CRUD:** estimate approval workflow, mid-job revision, assignment accept/reject, invoice auto-generation, feedback guard.
+- [ ] **At least 20 meaningful APIs** documented and connected to the actual DB (this project has 40+).
+- [ ] **Consistent response format:** `{ success, message, data, meta? }` for success; `{ success: false, message, errors? }` for errors.
+
+### Documentation & Deployment
+
+- [ ] **Postman collection:** exported and submitted with all endpoints, example bodies, and auth setup.
+- [ ] **Deployed:** Vercel (serverless) or Render with a live URL.
+- [ ] **Environment variables:** `.env.example` documents all required vars with placeholders.

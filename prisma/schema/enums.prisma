@@ -1,18 +1,91 @@
 enum Role {
-  SUPER_ADMIN
+  CUSTOMER
+  TECHNICIAN
+  MANAGER
   ADMIN
-  DOCTOR
-  PATIENT
 }
 
 enum UserStatus {
   ACTIVE
-  BLOCKED
+  SUSPENDED
   DELETED
 }
 
-enum Gender {
-  MALE
-  FEMALE
-  OTHER
+enum AuthProvider {
+  GOOGLE
+  CREDENTIAL
+}
+
+enum ServiceRequestStatus {
+  PENDING_REVIEW
+  APPROVED
+  DECLINED
+  COMPLETED
+  CLOSED_NO_WORK
+  CANCELLED
+}
+
+enum WorkOrderStatus {
+  AWAITING_ASSIGNMENT
+  ASSIGNED
+  SCHEDULED
+  ARRIVED
+  AWAITING_ESTIMATE_APPROVAL
+  ESTIMATE_APPROVED
+  IN_PROGRESS
+  WORK_COMPLETED
+  COMPLETED
+  CLOSED_NO_WORK
+  CANCELLED
+}
+
+enum AssignmentStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+  CANCELLED
+}
+
+enum AppointmentStatus {
+  SCHEDULED
+  CANCELLED
+}
+
+enum EstimateStatus {
+  SENT
+  REVISION_REQUESTED
+  SUPERSEDED
+  APPROVED
+  REJECTED
+  EXPIRED
+}
+
+enum EstimateItemType {
+  LABOR
+  MATERIAL
+}
+
+enum InvoiceStatus {
+  UNPAID
+  PAID
+}
+
+enum PaymentStatus {
+  UNPAID
+  PAID
+  FAILED
+  CANCELLED
+}
+
+enum TechnicianApplicationStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum NotificationCategory {
+  ASSIGNMENT
+  ESTIMATE
+  PAYMENT
+  COMPLETION
 }

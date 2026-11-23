@@ -1,0 +1,22 @@
+model Payment {
+  id               String        @id @default(uuid())
+  status           PaymentStatus @default(UNPAID)
+  amount           Decimal       @db.Decimal(12, 2)
+  currency         String        @default("BDT")
+  paymentGateway   String        @default("bkash")
+  bkashPaymentId   String?       @unique
+  bkashTrxId       String?       @unique
+  idempotencyKey   String        @unique // per checkout attempt
+  payerReference   String?
+  paidAt           DateTime?
+  gatewayResponse  Json?
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+
+  //relations
+  invoiceId String
+  invoice   Invoice @relation(fields: [invoiceId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@index([invoiceId, status], name: "idx_payment_invoice_status")
+  @@map("payments")
+}

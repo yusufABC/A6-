@@ -1,0 +1,20 @@
+model WorkOrder {
+  id        String          @id @default(uuid())
+  status    WorkOrderStatus @default(AWAITING_ASSIGNMENT)
+  isDeleted Boolean         @default(false)
+  deletedAt DateTime?
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
+
+  //relations
+  serviceRequestId String         @unique
+  serviceRequest   ServiceRequest @relation(fields: [serviceRequestId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  assignment    Assignment?
+  estimates     Estimate[]
+  invoice       Invoice?
+  feedback      Feedback?
+
+  @@index([status], name: "idx_workorder_status")
+  @@map("work_orders")
+}
