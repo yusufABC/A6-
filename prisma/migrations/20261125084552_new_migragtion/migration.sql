@@ -293,6 +293,7 @@ CREATE TABLE "users" (
     "role" "Role" NOT NULL DEFAULT 'CUSTOMER',
     "status" "UserStatus" NOT NULL DEFAULT 'ACTIVE',
     "needPasswordChange" BOOLEAN NOT NULL DEFAULT false,
+    "contactNumber" TEXT NOT NULL,
     "addressLine" TEXT,
     "city" TEXT,
     "district" TEXT,

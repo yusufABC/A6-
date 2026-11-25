@@ -9,6 +9,16 @@ export interface IRegisterCustomerPayload {
 	name: string;
 	email: string;
 	password: string;
+
+contactNumber:string
+
+
+}
+
+export interface IVerifyPaitentPayload {
+	
+	email: string;
+	otp:string
 }
 
 export interface IGoogleLoginPayload {

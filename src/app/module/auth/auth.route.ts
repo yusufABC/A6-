@@ -17,4 +17,10 @@ router.post("/refresh-token", AuthController.refreshToken);
 router.post("/forgot-password", AuthController.forgotPassword);
 router.post("/reset-password", AuthController.resetPassword);
 
+router.post(
+  "/verify-email",
+
+  AuthController.verifyCustomerEmail,
+);
+
 export const AuthRoutes = router;

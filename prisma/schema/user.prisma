@@ -9,6 +9,7 @@ model User {
   role               Role         @default(CUSTOMER)
   status             UserStatus   @default(ACTIVE)
   needPasswordChange Boolean      @default(false)
+  contactNumber      String?
 
   
   //address (single — Option A)

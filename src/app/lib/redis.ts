@@ -6,7 +6,9 @@ export const redisClient = createClient({
     password: config.redis_password,
     socket: {
         host: config.redis_host,
-        port: Number(config.redis_port)
+        port: Number(config.redis_port),
+        
+    
     }
 });
 

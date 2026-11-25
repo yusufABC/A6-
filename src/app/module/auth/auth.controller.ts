@@ -7,9 +7,22 @@ import { AuthService } from "./auth.service";
 
 const registerCustomer = catchAsync(async (req: Request, res: Response) => {
 	const payload = req.body;
-	const result = await AuthService.registerCustomer(payload);
+await AuthService.registerCustomer(payload);
+	sendResponse(res, {
+		statusCode: httpStatus.CREATED,
+		success: true,
+		message: "Verification OTP sent to your email",
+		data: null
+	});
 
-	const { accessToken, refreshToken, user } = result;
+});
+
+const verifyCustomerEmail = catchAsync(async (req: Request, res: Response) => {
+const payload=req.body
+	const result= await AuthService.verifyCustomerEmail(payload);
+
+
+	const { accessToken, refreshToken, user, } = result;
 
 	res.cookie("accessToken", accessToken, {
 		httpOnly: true,
@@ -27,16 +40,15 @@ const registerCustomer = catchAsync(async (req: Request, res: Response) => {
 	sendResponse(res, {
 		statusCode: httpStatus.CREATED,
 		success: true,
-		message: "Customer registered successfully",
+		message: "Success Fully Verified Email and User Registered Successfully",
 		data: {
 			accessToken,
 			refreshToken,
 			user,
-		},
+		
+		}
 	});
 });
-
-
 const loginUser = catchAsync(async (req: Request, res: Response) => {
 	const payload = req.body;
 	const result = await AuthService.loginUser(payload);
@@ -171,6 +183,7 @@ const resetPassword = catchAsync(async (req: Request, res: Response) => {
 
 export const AuthController = {
 	registerCustomer,
+	verifyCustomerEmail,
 	loginUser,
 	googleLogin,
 	getMe,

@@ -18,11 +18,12 @@ import {
     IRegisterCustomerPayload,
     IRequestUser,
     IResetPasswordPayload,
+    IVerifyPaitentPayload,
 } from "./auth.interface";
 
 import httpStatus from "http-status";
 const registerCustomer = async (payload: IRegisterCustomerPayload) => {
-    const { name, password } = payload;
+    const { name, password,contactNumber } = payload;
     const email = payload.email.trim().toLowerCase();
 
     const isUserExists = await prisma.user.findUnique({
@@ -35,6 +36,233 @@ const registerCustomer = async (payload: IRegisterCustomerPayload) => {
 
     const hashedPassword = await bcrypt.hash(password, 8);
 
+     
+   const expiresInSeconds=5*60
+   const otp=crypto.randomInt(100000, 1000000).toString();
+  const key=`Verify-Registration-OTP:${email}`
+ await redisClient.set(key,otp,{
+    expiration:{
+       type:'EX',
+       value:expiresInSeconds
+     },
+   })
+ 
+   
+ 
+   const templatePath=path.join(process.cwd(),"src/app/templates/verify-register-user.ejs")
+ const renderFileData={
+   name,
+   email,
+   otp,
+   expiresInMinutes:expiresInSeconds/60
+ }
+ 
+  const html=await ejs.renderFile(templatePath,renderFileData)
+ 
+ await Transporter.sendMail({
+   from:config.email_sender,
+   to:email,
+   subject:"Verify your email",
+   html
+ })
+ 
+   const CustomerRegistrationKey=`Customer-Registration-Data:${email}`
+   const redisUserDataPayload={
+     name,
+     email,
+     password:hashedPassword,
+     contactNumber
+   }
+ 
+   await redisClient.set(CustomerRegistrationKey,JSON.stringify(redisUserDataPayload),{
+     expiration:{
+        type:'EX',
+        value:expiresInSeconds
+     }
+   })
+ 
+
+   
+};
+
+/**
+ * 
+ *const registerPatient = async (payload: IRegisterPatientPayload) => {
+   const { name, password, patient: patientData } = payload;
+   const email = payload.email.trim().toLowerCase();
+ 
+   const isUserExists = await prisma.user.findUnique({
+     where: { email },
+   });
+ 
+   if (isUserExists) {
+     throw new AppError(httpStatus.CONFLICT, "User with this email already exists");
+   }
+ 
+   const hashedPassword = await bcrypt.hash(password, 8);
+ 
+ 
+ 
+   const expiresInSeconds=5*60
+   const otp=crypto.randomInt(100000, 1000000).toString();
+  const key=`Verify-Registration-OTP:${email}`
+ await redisClient.set(key,otp,{
+    expiration:{
+       type:'EX',
+       value:expiresInSeconds
+     },
+   })
+ 
+   
+ 
+   const templatePath=path.join(process.cwd(),"src/app/templates/verify-register-user.ejs")
+ const renderFileData={
+   name,
+   email,
+   otp,
+   expiresInMinutes:expiresInSeconds/60
+ }
+ 
+  const html=await ejs.renderFile(templatePath,renderFileData)
+ 
+ await Transporter.sendMail({
+   from:config.email_sender,
+   to:email,
+   subject:"Verify your email",
+   html
+ })
+ 
+   const patientRegistrationKey=`Patient-Registration-Data:${email}`
+   const redisUserDataPayload={
+     name,
+     email,
+     password:hashedPassword,
+     patient:patientData
+   }
+ 
+   await redisClient.set(patientRegistrationKey,JSON.stringify(redisUserDataPayload),{
+     expiration:{
+        type:'EX',
+        value:expiresInSeconds
+     }
+   })
+ 
+   
+ 
+ 
+ 
+ /**
+  * 
+ 
+  * 
+  
+ */
+
+const verifyCustomerEmail=async(payload:IVerifyPaitentPayload)=>{
+   const email = payload.email.trim().toLowerCase();
+   const {otp}=payload
+
+  const isUserExist = await prisma.user.findUnique({
+    where: { email },
+  });
+
+ 
+
+  if (isUserExist?.emailVerified) {
+    throw new AppError(httpStatus.BAD_REQUEST, "This Email is verified");
+  }
+   if (isUserExist?.isDeleted || isUserExist?.status === "DELETED") {
+    throw new AppError(httpStatus.FORBIDDEN, "User has been deleted");
+  }
+  if (isUserExist?.status === "SUSPENDED") {
+    throw new AppError(httpStatus.FORBIDDEN, "This user is blocked !.Please contact with admin");
+  }
+  
+
+  const key=`Verify-Registration-OTP:${email}`
+  const redisOtp=await redisClient.get(key)
+  
+
+  if (!redisOtp) {
+    throw new AppError(httpStatus.BAD_REQUEST, "Please send otp again");
+  }
+
+  if (redisOtp !== otp) {
+    throw new AppError(httpStatus.BAD_REQUEST, "Otp doesn't match");
+  }
+
+  await redisClient.del(key)
+
+  const customerRegistrationKey=`Customer-Registration-Data:${email}`
+  const redisCustomerData=await redisClient.get(customerRegistrationKey)
+  if(!redisCustomerData){
+    throw new AppError(httpStatus.NOT_FOUND, "Customer doesn't exist please try again!")
+  }
+  const customerPayload:IRegisterCustomerPayload=JSON.parse(redisCustomerData)
+
+const createdUser = await prisma.user.create({
+  data: {
+    name:customerPayload.name,
+    email:customerPayload.email,
+    password: customerPayload.password,
+    role: Role.CUSTOMER,
+    status: UserStatus.ACTIVE,
+    emailVerified: true,
+    contactNumber:customerPayload.contactNumber,
+  },
+  omit: { password: true },
+ 
+});
+
+await redisClient.del(customerRegistrationKey)
+
+ const templatePath=path.join(process.cwd(),"src/app/templates/welcome-email.ejs")
+ const renderData={
+  name:createdUser.name
+ }
+const html=await ejs.renderFile(templatePath,renderData)
+
+await Transporter.sendMail({
+  from:config.email_sender,
+  to:createdUser.email,
+  subject:"Welcome to our platform",
+  html
+})
+
+
+const {  ...user } = createdUser;
+const jwtPayload = {
+  userId: user.id,
+  name: user.name,
+  email: user.email,
+  role: user.role,
+};
+
+const accessToken = jwtUtils.createToken(
+  jwtPayload,
+  config.jwt_access_secret,
+  config.jwt_access_expires_in as SignOptions,
+);
+
+const refreshToken = jwtUtils.createToken(
+  jwtPayload,
+  config.jwt_refresh_secret,
+  config.jwt_refresh_expires_in as SignOptions,
+);
+
+  return {
+          user: createdUser,
+        accessToken,
+        refreshToken,
+  };
+
+
+}
+
+
+/**
+ * 
+ *  
     const createdUser = await prisma.user.create({
         data: {
             name,
@@ -71,7 +299,7 @@ const registerCustomer = async (payload: IRegisterCustomerPayload) => {
         accessToken,
         refreshToken,
     };
-};
+ */
 
 const loginUser = async (payload: ILoginUserPayload) => {
     const { password } = payload;
@@ -475,6 +703,7 @@ const resetPassword = async (payload: IResetPasswordPayload) => {
 
 export const AuthService = {
     registerCustomer,
+  verifyCustomerEmail,
     loginUser,
    googleLogin,
     getMe,
