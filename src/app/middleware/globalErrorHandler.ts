@@ -1,7 +1,9 @@
 import { NextFunction, Request, Response } from "express";
 import httpStatus from "http-status";
+import { MulterError } from "multer";
 import { Prisma } from "../../generated/prisma/client";
 import config from "../config";
+import { AppError } from "../utils/AppError";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export const globalErrorHandler = async (
@@ -46,11 +48,20 @@ export const globalErrorHandler = async (
 	} else if (err instanceof Prisma.PrismaClientUnknownRequestError) {
 		statusCode = httpStatus.INTERNAL_SERVER_ERROR;
 		errorMessage = "Error occurred during query execution";
+	} else if (err instanceof AppError) {
+		statusCode = err.statusCode;
+		errorMessage = err.message;
+	} else if (err instanceof MulterError) {
+		statusCode = httpStatus.BAD_REQUEST;
+		errorMessage =
+			err.code === "LIMIT_FILE_SIZE"
+				? "File too large. Maximum size is 5 MB"
+				: err.message;
 	} else if (err instanceof Error) {
 		errorMessage = err.message;
 	}
 
-	res.status(httpStatus.INTERNAL_SERVER_ERROR).json({
+	res.status(statusCode).json({
 		success: false,
 		statusCode: statusCode || httpStatus.INTERNAL_SERVER_ERROR,
 		name:

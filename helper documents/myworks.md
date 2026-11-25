@@ -65,16 +65,13 @@ statusMachine.ts, auditLog.ts, notification.ts are built and tested.
 ```
 Build feature 4: Profile
 (GET /users/me, PATCH /users/me, PATCH /users/me/address,
-PATCH /users/me/password, POST /users/me/profile-image).
+ POST /users/me/profile-image).
 Use SKILL.md, requirement-analysis.md and database_model_relations.md for all rules.
 Rules to follow:
 - All routes: any authenticated role, one auth(...) call listing all four roles.
 - Never return password (use omit).
 - PATCH /me: only name and phone. Never spread req.body.
 - PATCH /me/address: only addressLine, city, district, postalCode.
-- PATCH /me/password: body oldPassword + newPassword; bcrypt compare, then hash with config salt rounds.
-  Google users have password null: return a clear 400, do not crash.
-  New password must follow the same zod rules as register.
 - POST /me/profile-image: multer memory storage + Cloudinary, field name "profileImage",
   JPEG/PNG only, 5 MB max. Save imageUrl + imagePublicId, delete the old image after the new one succeeds.
 - Add zod validation schemas in the module's validation file.

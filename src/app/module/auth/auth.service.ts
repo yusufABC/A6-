@@ -23,7 +23,7 @@ import {
 
 import httpStatus from "http-status";
 const registerCustomer = async (payload: IRegisterCustomerPayload) => {
-    const { name, password,contactNumber } = payload;
+    const { name, password,phone } = payload;
     const email = payload.email.trim().toLowerCase();
 
     const isUserExists = await prisma.user.findUnique({
@@ -71,7 +71,7 @@ const registerCustomer = async (payload: IRegisterCustomerPayload) => {
      name,
      email,
      password:hashedPassword,
-     contactNumber
+     phone
    }
  
    await redisClient.set(CustomerRegistrationKey,JSON.stringify(redisUserDataPayload),{
@@ -208,7 +208,7 @@ const createdUser = await prisma.user.create({
     role: Role.CUSTOMER,
     status: UserStatus.ACTIVE,
     emailVerified: true,
-    contactNumber:customerPayload.contactNumber,
+    phone:customerPayload.phone,
   },
   omit: { password: true },
  

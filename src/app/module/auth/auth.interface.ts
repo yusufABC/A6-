@@ -10,7 +10,7 @@ export interface IRegisterCustomerPayload {
 	email: string;
 	password: string;
 
-contactNumber:string
+phone:string
 
 
 }
