@@ -1,0 +1,838 @@
+{
+  "info": {
+    "name": "FSMS - Feature 8 - Service Request List, Detail, Cancel",
+    "description": "Feature 8 tests: GET /service-requests, GET /service-requests/:id, DELETE /service-requests/:id.\n\nAuth requests are intentionally NOT included. Set these collection variables before running:\n- baseUrl (default http://localhost:5000)\n- customerToken, technicianToken, managerToken, adminToken (raw JWT values, no 'Bearer ' prefix)\n- serviceId (an active service id, used only by the optional setup requests)\n- otherCustomerRequestId (a request owned by a different customer)\n- assignedRequestId (a request whose work order is ASSIGNED/SCHEDULED or later)\n\nRun the Setup folder first. It creates fresh PENDING_REVIEW requests and stores their ids automatically. Then run List -> Detail -> Cancel -> Verify in order.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:5000" },
+    { "key": "customerToken", "value": "" },
+    { "key": "technicianToken", "value": "" },
+    { "key": "managerToken", "value": "" },
+    { "key": "adminToken", "value": "" },
+    { "key": "serviceId", "value": "" },
+    { "key": "requestId", "value": "" },
+    { "key": "cancelRequestId", "value": "" },
+    { "key": "cancelRequestIdWithReason", "value": "" },
+    { "key": "managerCancelRequestId", "value": "" },
+    { "key": "otherCustomerRequestId", "value": "" },
+    { "key": "assignedRequestId", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "Setup (optional - run first)",
+      "item": [
+        {
+          "name": "Create request (for list/detail/cancel no reason)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{customerToken}}" }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "serviceId", "value": "{{serviceId}}", "type": "text" },
+                { "key": "description", "value": "Feature 8 setup request - cancel without reason", "type": "text" }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/service-requests",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "service-requests"]
+            },
+            "description": "Uses the existing Feature 7 create endpoint. Stores requestId and cancelRequestId."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "const json = pm.response.json();",
+                  "pm.test('success is true', () => pm.expect(json.success).to.eql(true));",
+                  "if (json && json.data && json.data.id) {",
+                  "  pm.collectionVariables.set('requestId', json.data.id);",
+                  "  pm.collectionVariables.set('cancelRequestId', json.data.id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create request (for cancel with reason)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{customerToken}}" }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "serviceId", "value": "{{serviceId}}", "type": "text" },
+                { "key": "description", "value": "Feature 8 setup request - cancel with reason", "type": "text" }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/service-requests",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "service-requests"]
+            },
+            "description": "Uses the existing Feature 7 create endpoint. Stores cancelRequestIdWithReason."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "const json = pm.response.json();",
+                  "if (json && json.data && json.data.id) {",
+                  "  pm.collectionVariables.set('cancelRequestIdWithReason', json.data.id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create request (for manager cancel)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{customerToken}}" }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "serviceId", "value": "{{serviceId}}", "type": "text" },
+                { "key": "description", "value": "Feature 8 setup request - manager cancel", "type": "text" }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/service-requests",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "service-requests"]
+            },
+            "description": "Uses the existing Feature 7 create endpoint. Stores managerCancelRequestId."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "const json = pm.response.json();",
+                  "if (json && json.data && json.data.id) {",
+                  "  pm.collectionVariables.set('managerCancelRequestId', json.data.id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "List - GET /service-requests",
+      "item": [
+        {
+          "name": "List own requests (customer)",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{customerToken}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/service-requests",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "service-requests"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.test('success is true', () => pm.expect(json.success).to.eql(true));",
+                  "pm.test('data is an array', () => pm.expect(json.data).to.be.an('array'));",
+                  "pm.test('meta has pagination fields', () => {",
+                  "  pm.expect(json.meta).to.have.property('page');",
+                  "  pm.expect(json.meta).to.have.property('limit');",
+                  "  pm.expect(json.meta).to.have.property('total');",
+                  "  pm.expect(json.meta).to.have.property('totalPages');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List with pagination (page=1&limit=2)",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{customerToken}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/service-requests?page=1&limit=2",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "service-requests"],
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "limit", "value": "2" }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.test('limit is 2', () => pm.expect(json.meta.limit).to.eql(2));",
+                  "pm.test('page is 1', () => pm.expect(json.meta.page).to.eql(1));",
+                  "pm.test('data length <= 2', () => pm.expect(json.data.length).to.be.at.most(2));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List filter by status=PENDING_REVIEW",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{customerToken}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/service-requests?status=PENDING_REVIEW",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "service-requests"],
+              "query": [
+                { "key": "status", "value": "PENDING_REVIEW" }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.test('all returned rows are PENDING_REVIEW', () => {",
+                  "  json.data.forEach((item) => pm.expect(item.status).to.eql('PENDING_REVIEW'));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List searchTerm=Split",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{customerToken}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/service-requests?searchTerm=Split",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "service-requests"],
+              "query": [
+                { "key": "searchTerm", "value": "Split" }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.test('data is an array', () => pm.expect(json.data).to.be.an('array'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List sort by createdAt asc",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{customerToken}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/service-requests?sortBy=createdAt&sortOrder=asc",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "service-requests"],
+              "query": [
+                { "key": "sortBy", "value": "createdAt" },
+                { "key": "sortOrder", "value": "asc" }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.test('data is sorted ascending by createdAt', () => {",
+                  "  const dates = json.data.map((item) => new Date(item.createdAt).getTime());",
+                  "  for (let i = 1; i < dates.length; i += 1) {",
+                  "    pm.expect(dates[i]).to.be.at.least(dates[i - 1]);",
+                  "  }",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List as technician (own only)",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{technicianToken}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/service-requests",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "service-requests"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.test('data is an array', () => pm.expect(json.data).to.be.an('array'));",
+                  "pm.test('meta has pagination fields', () => {",
+                  "  pm.expect(json.meta).to.have.property('page');",
+                  "  pm.expect(json.meta).to.have.property('limit');",
+                  "  pm.expect(json.meta).to.have.property('total');",
+                  "  pm.expect(json.meta).to.have.property('totalPages');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List as manager (all)",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{managerToken}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/service-requests",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "service-requests"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.test('data is an array', () => pm.expect(json.data).to.be.an('array'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List as admin (all)",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{adminToken}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/service-requests",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "service-requests"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.test('data is an array', () => pm.expect(json.data).to.be.an('array'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List without token (expect 401)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/service-requests",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "service-requests"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401 Unauthorized', () => pm.response.to.have.status(401));",
+                  "const json = pm.response.json();",
+                  "pm.test('success is false', () => pm.expect(json.success).to.eql(false));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Detail - GET /service-requests/:id",
+      "item": [
+        {
+          "name": "Get own request (customer)",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{customerToken}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/service-requests/{{requestId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "service-requests", "{{requestId}}"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.test('returns the requested id', () => pm.expect(json.data.id).to.eql(pm.collectionVariables.get('requestId')));",
+                  "pm.test('has workOrder property', () => pm.expect(json.data).to.have.property('workOrder'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get request as manager",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{managerToken}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/service-requests/{{requestId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "service-requests", "{{requestId}}"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.test('returns the requested id', () => pm.expect(json.data.id).to.eql(pm.collectionVariables.get('requestId')));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get request as admin",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{adminToken}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/service-requests/{{requestId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "service-requests", "{{requestId}}"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.test('returns the requested id', () => pm.expect(json.data.id).to.eql(pm.collectionVariables.get('requestId')));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get request as technician (expect 403 if not owner)",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{technicianToken}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/service-requests/{{requestId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "service-requests", "{{requestId}}"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('403 Forbidden unless technician is the owner', () => pm.response.to.have.status(403));",
+                  "const json = pm.response.json();",
+                  "pm.test('success is false', () => pm.expect(json.success).to.eql(false));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get another customer's request (expect 403)",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{customerToken}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/service-requests/{{otherCustomerRequestId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "service-requests", "{{otherCustomerRequestId}}"]
+            },
+            "description": "Set otherCustomerRequestId to a request owned by a different customer first."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('403 Forbidden', () => pm.response.to.have.status(403));",
+                  "const json = pm.response.json();",
+                  "pm.test('success is false', () => pm.expect(json.success).to.eql(false));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get non-existent request (expect 404)",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{customerToken}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/service-requests/00000000-0000-0000-0000-000000000000",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "service-requests", "00000000-0000-0000-0000-000000000000"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('404 Not Found', () => pm.response.to.have.status(404));",
+                  "const json = pm.response.json();",
+                  "pm.test('success is false', () => pm.expect(json.success).to.eql(false));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Cancel - DELETE /service-requests/:id",
+      "item": [
+        {
+          "name": "Cancel PENDING_REVIEW without reason (customer)",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{customerToken}}" }
+            ],
+            "body": { "mode": "none" },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/service-requests/{{cancelRequestId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "service-requests", "{{cancelRequestId}}"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.test('request status is CANCELLED', () => pm.expect(json.data.status).to.eql('CANCELLED'));",
+                  "pm.test('workOrder is CANCELLED when present', () => {",
+                  "  if (json.data.workOrder) pm.expect(json.data.workOrder.status).to.eql('CANCELLED');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Cancel the same request again (expect 403)",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{customerToken}}" }
+            ],
+            "body": { "mode": "none" },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/service-requests/{{cancelRequestId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "service-requests", "{{cancelRequestId}}"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('403 Forbidden', () => pm.response.to.have.status(403));",
+                  "const json = pm.response.json();",
+                  "pm.test('success is false', () => pm.expect(json.success).to.eql(false));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Cancel PENDING_REVIEW with reason (customer)",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{customerToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"reason\":\"Customer requested cancellation\"}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/service-requests/{{cancelRequestIdWithReason}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "service-requests", "{{cancelRequestIdWithReason}}"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.test('request status is CANCELLED', () => pm.expect(json.data.status).to.eql('CANCELLED'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Cancel as manager (expect 200)",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{managerToken}}" }
+            ],
+            "body": { "mode": "none" },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/service-requests/{{managerCancelRequestId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "service-requests", "{{managerCancelRequestId}}"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.test('request status is CANCELLED', () => pm.expect(json.data.status).to.eql('CANCELLED'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Cancel another customer's request (expect 403)",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{customerToken}}" }
+            ],
+            "body": { "mode": "none" },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/service-requests/{{otherCustomerRequestId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "service-requests", "{{otherCustomerRequestId}}"]
+            },
+            "description": "Set otherCustomerRequestId to a request owned by a different customer first."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('403 Forbidden', () => pm.response.to.have.status(403));",
+                  "const json = pm.response.json();",
+                  "pm.test('success is false', () => pm.expect(json.success).to.eql(false));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Cancel after assignment (expect 403)",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{customerToken}}" }
+            ],
+            "body": { "mode": "none" },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/service-requests/{{assignedRequestId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "service-requests", "{{assignedRequestId}}"]
+            },
+            "description": "Set assignedRequestId to a request whose work order is ASSIGNED/SCHEDULED or later first. Feature 8 must reject it with 403."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('403 Forbidden', () => pm.response.to.have.status(403));",
+                  "const json = pm.response.json();",
+                  "pm.test('success is false', () => pm.expect(json.success).to.eql(false));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Cancel non-existent request (expect 404)",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{customerToken}}" }
+            ],
+            "body": { "mode": "none" },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/service-requests/00000000-0000-0000-0000-000000000000",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "service-requests", "00000000-0000-0000-0000-000000000000"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('404 Not Found', () => pm.response.to.have.status(404));",
+                  "const json = pm.response.json();",
+                  "pm.test('success is false', () => pm.expect(json.success).to.eql(false));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Verify",
+      "item": [
+        {
+          "name": "Get cancelled request (customer)",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{customerToken}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/service-requests/{{requestId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "service-requests", "{{requestId}}"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.test('request is CANCELLED', () => pm.expect(json.data.status).to.eql('CANCELLED'));",
+                  "pm.test('workOrder is CANCELLED when present', () => {",
+                  "  if (json.data.workOrder) pm.expect(json.data.workOrder.status).to.eql('CANCELLED');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

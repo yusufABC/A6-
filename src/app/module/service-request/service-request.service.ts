@@ -1,13 +1,34 @@
 import httpStatus from "http-status";
-import { UserStatus } from "../../../generated/prisma/enums";
+import {
+	Role,
+	ServiceRequestStatus,
+	UserStatus,
+	WorkOrderStatus,
+} from "../../../generated/prisma/enums";
+import type {
+	ServiceRequestOrderByWithRelationInput,
+	ServiceRequestWhereInput,
+} from "../../../generated/prisma/models";
 import { prisma } from "../../lib/prisma";
 import { uploadToCloudinary } from "../../lib/uploadImage";
 import { AppError } from "../../utils/AppError";
 import { AuditAction, createAuditLog } from "../../utils/auditLog";
+import { buildPaginationMeta, getPagination } from "../../utils/pagination";
+import {
+	assertTransition,
+	serviceRequestMachine,
+	workOrderMachine,
+} from "../../utils/statusMachine";
 import type {
 	IAttachment,
+	ICancelServiceRequestPayload,
 	ICreateServiceRequestPayload,
+	IRequestActor,
+	IServiceRequestListQuery,
 } from "./service-request.interface";
+
+const isPrivilegedRole = (role: Role) =>
+	role === Role.MANAGER || role === Role.ADMIN;
 
 const createServiceRequest = async (
 	payload: ICreateServiceRequestPayload,
@@ -88,6 +109,223 @@ const createServiceRequest = async (
 	});
 };
 
+const getServiceRequests = async (
+	query: IServiceRequestListQuery,
+	actor: IRequestActor,
+) => {
+	const { page, limit, skip } = getPagination(query);
+
+	const andConditions: ServiceRequestWhereInput[] = [{ isDeleted: false }];
+
+	if (!isPrivilegedRole(actor.role)) {
+		andConditions.push({ customerId: actor.userId });
+	}
+
+	if (query.status) {
+		andConditions.push({ status: query.status });
+	}
+
+	if (query.searchTerm) {
+		const searchTerm = query.searchTerm;
+		andConditions.push({
+			OR: [
+				{
+					serviceNameSnapshot: {
+						contains: searchTerm,
+						mode: "insensitive",
+					},
+				},
+				{
+					description: {
+						contains: searchTerm,
+						mode: "insensitive",
+					},
+				},
+				{
+					customer: {
+						name: { contains: searchTerm, mode: "insensitive" },
+					},
+				},
+				{
+					customer: {
+						email: { contains: searchTerm, mode: "insensitive" },
+					},
+				},
+			],
+		});
+	}
+
+	const where: ServiceRequestWhereInput = { AND: andConditions };
+
+	const data = await prisma.serviceRequest.findMany({
+		where,
+		take: limit,
+		skip,
+		orderBy: {
+			[query.sortBy]: query.sortOrder,
+		} as ServiceRequestOrderByWithRelationInput,
+		include: {
+			customer: {
+				select: { id: true, name: true, email: true },
+			},
+			workOrder: {
+				select: { id: true, status: true },
+			},
+		},
+	});
+
+	const total = await prisma.serviceRequest.count({ where });
+
+	return {
+		data,
+		meta: buildPaginationMeta(page, limit, total),
+	};
+};
+
+const getServiceRequestById = async (id: string, actor: IRequestActor) => {
+	const serviceRequest = await prisma.serviceRequest.findFirst({
+		where: { id, isDeleted: false },
+		include: {
+			customer: {
+				select: {
+					id: true,
+					name: true,
+					email: true,
+					phone: true,
+					imageUrl: true,
+				},
+			},
+			service: {
+				select: { id: true, name: true, requiredSkill: true },
+			},
+			workOrder: {
+				include: {
+					assignment: {
+						include: {
+							technician: {
+								include: {
+									user: {
+										select: {
+											id: true,
+											name: true,
+											phone: true,
+											imageUrl: true,
+										},
+									},
+								},
+							},
+							appointment: true,
+						},
+					},
+				},
+			},
+		},
+	});
+
+	if (!serviceRequest) {
+		throw new AppError(httpStatus.NOT_FOUND, "Service request not found");
+	}
+
+	if (
+		!isPrivilegedRole(actor.role) &&
+		serviceRequest.customerId !== actor.userId
+	) {
+		throw new AppError(
+			httpStatus.FORBIDDEN,
+			"You don't have permission to view this service request",
+		);
+	}
+
+	return serviceRequest;
+};
+
+const cancelServiceRequest = async (
+	id: string,
+	actor: IRequestActor,
+	payload: ICancelServiceRequestPayload,
+) => {
+	const serviceRequest = await prisma.serviceRequest.findFirst({
+		where: { id, isDeleted: false },
+		include: {
+			workOrder: {
+				select: { id: true, status: true },
+			},
+		},
+	});
+
+	if (!serviceRequest) {
+		throw new AppError(httpStatus.NOT_FOUND, "Service request not found");
+	}
+
+	if (
+		!isPrivilegedRole(actor.role) &&
+		serviceRequest.customerId !== actor.userId
+	) {
+		throw new AppError(
+			httpStatus.FORBIDDEN,
+			"You don't have permission to cancel this service request",
+		);
+	}
+
+	const workOrder = serviceRequest.workOrder;
+	const canCancel =
+		serviceRequest.status === ServiceRequestStatus.PENDING_REVIEW ||
+		workOrder?.status === WorkOrderStatus.AWAITING_ASSIGNMENT;
+
+	if (!canCancel) {
+		throw new AppError(
+			httpStatus.FORBIDDEN,
+			"This service request can no longer be cancelled",
+		);
+	}
+
+	assertTransition(
+		serviceRequestMachine,
+		serviceRequest.status,
+		ServiceRequestStatus.CANCELLED,
+	);
+
+	if (workOrder) {
+		assertTransition(
+			workOrderMachine,
+			workOrder.status,
+			WorkOrderStatus.CANCELLED,
+		);
+	}
+
+	return prisma.$transaction(async (tx) => {
+		if (workOrder) {
+			await tx.workOrder.update({
+				where: { id: workOrder.id },
+				data: { status: WorkOrderStatus.CANCELLED },
+			});
+		}
+
+		const updatedServiceRequest = await tx.serviceRequest.update({
+			where: { id: serviceRequest.id },
+			data: { status: ServiceRequestStatus.CANCELLED },
+			include: {
+				workOrder: {
+					select: { id: true, status: true },
+				},
+			},
+		});
+
+		await createAuditLog(tx, {
+			userId: actor.userId,
+			action: AuditAction.REQUEST_CANCELLED,
+			entityType: "ServiceRequest",
+			entityId: serviceRequest.id,
+			metadata: payload.reason ? { reason: payload.reason } : undefined,
+		});
+
+		return updatedServiceRequest;
+	});
+};
+
 export const ServiceRequestServices = {
 	createServiceRequest,
+	getServiceRequests,
+	getServiceRequestById,
+	cancelServiceRequest,
 };
