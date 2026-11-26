@@ -1,0 +1,691 @@
+{
+  "info": {
+    "name": "FSMS - Feature 7 - Create Service Request",
+    "description": "Importable Postman Collection for POST /api/v1/service-requests (multipart, up to 3 attachments). Uses collection variables only.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:5000" },
+    { "key": "adminEmail", "value": "" },
+    { "key": "adminPassword", "value": "" },
+    { "key": "customerEmail", "value": "" },
+    { "key": "customerPassword", "value": "" },
+    { "key": "technicianEmail", "value": "" },
+    { "key": "technicianPassword", "value": "" },
+    { "key": "managerEmail", "value": "" },
+    { "key": "managerPassword", "value": "" },
+    { "key": "adminToken", "value": "" },
+    { "key": "customerToken", "value": "" },
+    { "key": "technicianToken", "value": "" },
+    { "key": "managerToken", "value": "" },
+    { "key": "serviceId", "value": "" },
+    { "key": "inactiveServiceId", "value": "" },
+    { "key": "requestId", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "1. Auth",
+      "item": [
+        {
+          "name": "Login as Admin",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Admin login succeeds\", () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json.success).to.eql(true);",
+                  "  pm.collectionVariables.set(\"adminToken\", json.data.accessToken);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{adminEmail}}\",\n  \"password\": \"{{adminPassword}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/auth/login",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "auth", "login"]
+            }
+          }
+        },
+        {
+          "name": "Login as Customer",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Customer login succeeds\", () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json.success).to.eql(true);",
+                  "  pm.collectionVariables.set(\"customerToken\", json.data.accessToken);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{customerEmail}}\",\n  \"password\": \"{{customerPassword}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/auth/login",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "auth", "login"]
+            }
+          }
+        },
+        {
+          "name": "Login as Technician",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Technician login succeeds\", () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json.success).to.eql(true);",
+                  "  pm.collectionVariables.set(\"technicianToken\", json.data.accessToken);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{technicianEmail}}\",\n  \"password\": \"{{technicianPassword}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/auth/login",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "auth", "login"]
+            }
+          }
+        },
+        {
+          "name": "Login as Manager",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Manager login succeeds\", () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json.success).to.eql(true);",
+                  "  pm.collectionVariables.set(\"managerToken\", json.data.accessToken);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{managerEmail}}\",\n  \"password\": \"{{managerPassword}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/auth/login",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "auth", "login"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. Services",
+      "item": [
+        {
+          "name": "Public list (save first serviceId)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Public list succeeds\", () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json.data).to.be.an(\"array\");",
+                  "  if (json.data.length > 0) {",
+                  "    pm.collectionVariables.set(\"serviceId\", json.data[0].id);",
+                  "  }",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/services",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "services"]
+            }
+          }
+        },
+        {
+          "name": "Create service (Admin)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Service created\", () => {",
+                  "  pm.response.to.have.status(201);",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json.success).to.eql(true);",
+                  "  pm.collectionVariables.set(\"serviceId\", json.data.id);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{adminToken}}", "type": "string" }]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Split AC Servicing\",\n  \"description\": \"Full servicing of a split air conditioner\",\n  \"requiredSkill\": \"AC Repair\",\n  \"basePriceAmount\": \"1500.00\",\n  \"estimatedDurationMinutes\": 90,\n  \"isActive\": true\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/services",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "services"]
+            }
+          }
+        },
+        {
+          "name": "Create inactive service (Admin)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Inactive service created\", () => {",
+                  "  pm.response.to.have.status(201);",
+                  "  const json = pm.response.json();",
+                  "  pm.collectionVariables.set(\"inactiveServiceId\", json.data.id);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{adminToken}}", "type": "string" }]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Inactive Test Service\",\n  \"requiredSkill\": \"Plumbing\",\n  \"basePriceAmount\": \"500.00\",\n  \"estimatedDurationMinutes\": 45,\n  \"isActive\": false\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/services",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "services"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "3. Customer Address",
+      "item": [
+        {
+          "name": "Set customer address",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Address updated\", () => {",
+                  "  pm.response.to.have.status(200);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{customerToken}}", "type": "string" }]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"addressLine\": \"House 12, Road 5, Dhanmondi\",\n  \"city\": \"Dhaka\",\n  \"district\": \"Dhaka\",\n  \"postalCode\": \"1209\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users/me/address",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "users", "me", "address"]
+            }
+          }
+        },
+        {
+          "name": "Set technician address",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Technician address updated\", () => {",
+                  "  pm.response.to.have.status(200);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{technicianToken}}", "type": "string" }]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"addressLine\": \"House 7, Road 2, Mirpur\",\n  \"city\": \"Dhaka\",\n  \"district\": \"Dhaka\",\n  \"postalCode\": \"1216\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users/me/address",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "users", "me", "address"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "4. Create Service Request",
+      "item": [
+        {
+          "name": "Create with photos (Customer)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Service request created\", () => {",
+                  "  pm.response.to.have.status(201);",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json.success).to.eql(true);",
+                  "  pm.expect(json.data.status).to.eql(\"PENDING_REVIEW\");",
+                  "  pm.expect(json.data.serviceNameSnapshot).to.be.a(\"string\");",
+                  "  pm.expect(json.data.basePriceSnapshot).to.be.a(\"string\");",
+                  "  pm.expect(json.data.serviceAddressLine).to.be.a(\"string\");",
+                  "  pm.expect(json.data.serviceCity).to.be.a(\"string\");",
+                  "  pm.expect(json.data.serviceDistrict).to.be.a(\"string\");",
+                  "  pm.collectionVariables.set(\"requestId\", json.data.id);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{customerToken}}", "type": "string" }]
+            },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "serviceId", "value": "{{serviceId}}", "type": "text" },
+                { "key": "description", "value": "Living room split AC is not cooling and makes a loud noise.", "type": "text" },
+                { "key": "preferredDateTime", "value": "2026-12-01T10:00:00.000Z", "type": "text" },
+                { "key": "attachments", "type": "file", "src": "" }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/service-requests",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "service-requests"]
+            }
+          }
+        },
+        {
+          "name": "Create without photos (Customer)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Service request created without photos\", () => {",
+                  "  pm.response.to.have.status(201);",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json.data.status).to.eql(\"PENDING_REVIEW\");",
+                  "  pm.expect(json.data.attachments ?? null).to.eql(null);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{customerToken}}", "type": "string" }]
+            },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "serviceId", "value": "{{serviceId}}", "type": "text" },
+                { "key": "description", "value": "No photos, only text.", "type": "text" }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/service-requests",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "service-requests"]
+            }
+          }
+        },
+        {
+          "name": "Create as Technician",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Technician can create a request\", () => {",
+                  "  pm.response.to.have.status(201);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{technicianToken}}", "type": "string" }]
+            },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "serviceId", "value": "{{serviceId}}", "type": "text" },
+                { "key": "description", "value": "Technician creating a request for own property.", "type": "text" }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/service-requests",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "service-requests"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "5. Negative & Access Control",
+      "item": [
+        {
+          "name": "Inactive service (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Inactive service rejected\", () => {",
+                  "  pm.response.to.have.status(400);",
+                  "  pm.expect(pm.response.json().success).to.eql(false);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{customerToken}}", "type": "string" }]
+            },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "serviceId", "value": "{{inactiveServiceId}}", "type": "text" },
+                { "key": "description", "value": "Should fail because the service is inactive.", "type": "text" }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/service-requests",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "service-requests"]
+            }
+          }
+        },
+        {
+          "name": "Missing description (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Missing description rejected\", () => {",
+                  "  pm.response.to.have.status(400);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{customerToken}}", "type": "string" }]
+            },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "serviceId", "value": "{{serviceId}}", "type": "text" }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/service-requests",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "service-requests"]
+            }
+          }
+        },
+        {
+          "name": "Mass assignment field (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Extra field rejected by strict schema\", () => {",
+                  "  pm.response.to.have.status(400);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{customerToken}}", "type": "string" }]
+            },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "serviceId", "value": "{{serviceId}}", "type": "text" },
+                { "key": "description", "value": "Attempting mass assignment.", "type": "text" },
+                { "key": "status", "value": "APPROVED", "type": "text" }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/service-requests",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "service-requests"]
+            }
+          }
+        },
+        {
+          "name": "Manager forbidden (403)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Manager is forbidden\", () => {",
+                  "  pm.response.to.have.status(403);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{managerToken}}", "type": "string" }]
+            },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "serviceId", "value": "{{serviceId}}", "type": "text" },
+                { "key": "description", "value": "Manager should not create requests.", "type": "text" }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/service-requests",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "service-requests"]
+            }
+          }
+        },
+        {
+          "name": "Admin forbidden (403)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Admin is forbidden\", () => {",
+                  "  pm.response.to.have.status(403);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{adminToken}}", "type": "string" }]
+            },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "serviceId", "value": "{{serviceId}}", "type": "text" },
+                { "key": "description", "value": "Admin should not create requests.", "type": "text" }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/service-requests",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "service-requests"]
+            }
+          }
+        },
+        {
+          "name": "No token (401)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Unauthenticated request rejected\", () => {",
+                  "  pm.response.to.have.status(401);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "auth": { "type": "noauth" },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "serviceId", "value": "{{serviceId}}", "type": "text" },
+                { "key": "description", "value": "No token.", "type": "text" }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/service-requests",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "service-requests"]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}
