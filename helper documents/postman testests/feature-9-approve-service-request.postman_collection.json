@@ -1,0 +1,541 @@
+{
+  "info": {
+    "name": "FSMS - Feature 9 - Approve Service Request",
+    "description": "Feature 9 tests: POST /api/v1/service-requests/:id/approve (roles MANAGER and ADMIN).\n\nWHAT THIS ENDPOINT DOES\n- Guards, in order: request exists -> requester is not the approver -> status transition PENDING_REVIEW -> APPROVED is legal.\n- In ONE transaction: creates a WorkOrder (AWAITING_ASSIGNMENT), sets ServiceRequest.status = APPROVED, writes AuditLog action REQUEST_APPROVED.\n- No customer notification is created (NotificationCategory has no fitting value).\n\nBEFORE RUNNING - set these collection variables:\n- baseUrl (default http://localhost:5000)\n- customerToken, technicianToken, managerToken, adminToken (raw JWT values, no 'Bearer ' prefix)\n- serviceId (an active service id whose customer has a complete address)\n- managerOwnRequestId (optional: a request whose customerId equals the manager's userId)\n- adminOwnRequestId (optional: a request whose customerId equals the admin's userId)\n\nHOW TO RUN\n1. Run the 'Setup' folder. It creates fresh PENDING_REVIEW requests as the customer and stores their ids.\n2. Run the 'Approve' folder in order. It covers the happy path (manager + admin), the repeat-approval 400, the wrong-role 403s, the missing-token 401 and the 404.\n3. Run the 'Verify' folder to confirm ServiceRequest = APPROVED and WorkOrder = AWAITING_ASSIGNMENT.\n4. The 'Self-approval guard' folder only works if you prepare managerOwnRequestId/adminOwnRequestId (see that folder's description).\n\nDB CHECKS (run after approving a request, replacing <REQUEST_ID>):\n  SELECT id, status FROM service_requests WHERE id = '<REQUEST_ID>';\n  SELECT id, status, \"serviceRequestId\" FROM work_orders WHERE \"serviceRequestId\" = '<REQUEST_ID>';\n  SELECT action, \"entityType\", \"entityId\", \"userId\", \"createdAt\" FROM audit_logs WHERE \"entityId\" = '<REQUEST_ID>' AND action = 'REQUEST_APPROVED';\nExpected: request APPROVED, exactly one work order in AWAITING_ASSIGNMENT, exactly one REQUEST_APPROVED audit row.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:5000" },
+    { "key": "customerToken", "value": "" },
+    { "key": "technicianToken", "value": "" },
+    { "key": "managerToken", "value": "" },
+    { "key": "adminToken", "value": "" },
+    { "key": "serviceId", "value": "" },
+    { "key": "managerApproveRequestId", "value": "" },
+    { "key": "adminApproveRequestId", "value": "" },
+    { "key": "repeatApproveRequestId", "value": "" },
+    { "key": "managerOwnRequestId", "value": "" },
+    { "key": "adminOwnRequestId", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "Setup (run first)",
+      "item": [
+        {
+          "name": "Create request (manager will approve)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{customerToken}}" }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "serviceId", "value": "{{serviceId}}", "type": "text" },
+                { "key": "description", "value": "Feature 9 setup - manager approval happy path", "type": "text" }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/service-requests",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "service-requests"]
+            },
+            "description": "Uses the existing Feature 7 create endpoint. Requires customerToken to be a CUSTOMER with a complete address. Stores managerApproveRequestId."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "const json = pm.response.json();",
+                  "pm.test('success is true', () => pm.expect(json.success).to.eql(true));",
+                  "pm.test('starts as PENDING_REVIEW', () => pm.expect(json.data.status).to.eql('PENDING_REVIEW'));",
+                  "if (json && json.data && json.data.id) {",
+                  "  pm.collectionVariables.set('managerApproveRequestId', json.data.id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create request (admin will approve)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{customerToken}}" }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "serviceId", "value": "{{serviceId}}", "type": "text" },
+                { "key": "description", "value": "Feature 9 setup - admin approval happy path", "type": "text" }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/service-requests",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "service-requests"]
+            },
+            "description": "Uses the existing Feature 7 create endpoint. Stores adminApproveRequestId."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "const json = pm.response.json();",
+                  "pm.test('success is true', () => pm.expect(json.success).to.eql(true));",
+                  "if (json && json.data && json.data.id) {",
+                  "  pm.collectionVariables.set('adminApproveRequestId', json.data.id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create request (repeat-approval test)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{customerToken}}" }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "serviceId", "value": "{{serviceId}}", "type": "text" },
+                { "key": "description", "value": "Feature 9 setup - repeat approval must fail", "type": "text" }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/service-requests",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "service-requests"]
+            },
+            "description": "Uses the existing Feature 7 create endpoint. Stores repeatApproveRequestId. It is approved once, then approved again to prove the 400 transition guard."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "const json = pm.response.json();",
+                  "if (json && json.data && json.data.id) {",
+                  "  pm.collectionVariables.set('repeatApproveRequestId', json.data.id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Approve - POST /service-requests/:id/approve",
+      "item": [
+        {
+          "name": "Manager approves PENDING_REVIEW request (expect 200)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{managerToken}}" }
+            ],
+            "body": { "mode": "none" },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/service-requests/{{managerApproveRequestId}}/approve",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "service-requests", "{{managerApproveRequestId}}", "approve"]
+            },
+            "description": "Happy path for MANAGER. Expects 200, request APPROVED, a workOrder object in the response with status AWAITING_ASSIGNMENT."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.test('success is true', () => pm.expect(json.success).to.eql(true));",
+                  "pm.test('message is the approve message', () => pm.expect(json.message).to.eql('Service request approved successfully'));",
+                  "pm.test('request status is APPROVED', () => pm.expect(json.data.status).to.eql('APPROVED'));",
+                  "pm.test('workOrder exists', () => pm.expect(json.data.workOrder).to.be.an('object'));",
+                  "pm.test('workOrder status is AWAITING_ASSIGNMENT', () => pm.expect(json.data.workOrder.status).to.eql('AWAITING_ASSIGNMENT'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Admin approves PENDING_REVIEW request (expect 200)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{adminToken}}" }
+            ],
+            "body": { "mode": "none" },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/service-requests/{{adminApproveRequestId}}/approve",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "service-requests", "{{adminApproveRequestId}}", "approve"]
+            },
+            "description": "Happy path for ADMIN. Same expected shape as the manager happy path."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.test('success is true', () => pm.expect(json.success).to.eql(true));",
+                  "pm.test('request status is APPROVED', () => pm.expect(json.data.status).to.eql('APPROVED'));",
+                  "pm.test('workOrder status is AWAITING_ASSIGNMENT', () => pm.expect(json.data.workOrder.status).to.eql('AWAITING_ASSIGNMENT'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Approve the repeat-test request once (expect 200)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{managerToken}}" }
+            ],
+            "body": { "mode": "none" },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/service-requests/{{repeatApproveRequestId}}/approve",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "service-requests", "{{repeatApproveRequestId}}", "approve"]
+            },
+            "description": "First approval of repeatApproveRequestId. Must succeed so the next request can prove the transition guard."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.test('request status is APPROVED', () => pm.expect(json.data.status).to.eql('APPROVED'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Approve the same request again (expect 400)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{managerToken}}" }
+            ],
+            "body": { "mode": "none" },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/service-requests/{{repeatApproveRequestId}}/approve",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "service-requests", "{{repeatApproveRequestId}}", "approve"]
+            },
+            "description": "The request is already APPROVED. assertTransition must reject APPROVED -> APPROVED with 400 'Invalid status transition'."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 Bad Request', () => pm.response.to.have.status(400));",
+                  "const json = pm.response.json();",
+                  "pm.test('success is false', () => pm.expect(json.success).to.eql(false));",
+                  "pm.test('message is Invalid status transition', () => pm.expect(json.message).to.eql('Invalid status transition'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Approve without token (expect 401)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": { "mode": "none" },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/service-requests/{{managerApproveRequestId}}/approve",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "service-requests", "{{managerApproveRequestId}}", "approve"]
+            },
+            "description": "auth() must reject a missing token before the controller runs."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401 Unauthorized', () => pm.response.to.have.status(401));",
+                  "const json = pm.response.json();",
+                  "pm.test('success is false', () => pm.expect(json.success).to.eql(false));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Approve as customer (expect 403)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{customerToken}}" }
+            ],
+            "body": { "mode": "none" },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/service-requests/{{adminApproveRequestId}}/approve",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "service-requests", "{{adminApproveRequestId}}", "approve"]
+            },
+            "description": "Only MANAGER and ADMIN are allowed. A CUSTOMER token must get 403 at the route guard, before any service logic."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('403 Forbidden', () => pm.response.to.have.status(403));",
+                  "const json = pm.response.json();",
+                  "pm.test('success is false', () => pm.expect(json.success).to.eql(false));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Approve as technician (expect 403)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{technicianToken}}" }
+            ],
+            "body": { "mode": "none" },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/service-requests/{{adminApproveRequestId}}/approve",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "service-requests", "{{adminApproveRequestId}}", "approve"]
+            },
+            "description": "A TECHNICIAN token must get 403 at the route guard."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('403 Forbidden', () => pm.response.to.have.status(403));",
+                  "const json = pm.response.json();",
+                  "pm.test('success is false', () => pm.expect(json.success).to.eql(false));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Approve non-existent request (expect 404)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{managerToken}}" }
+            ],
+            "body": { "mode": "none" },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/service-requests/00000000-0000-0000-0000-000000000000/approve",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "service-requests", "00000000-0000-0000-0000-000000000000", "approve"]
+            },
+            "description": "The existence guard runs first and returns 404 before any status or self-approval check."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('404 Not Found', () => pm.response.to.have.status(404));",
+                  "const json = pm.response.json();",
+                  "pm.test('success is false', () => pm.expect(json.success).to.eql(false));",
+                  "pm.test('message is Service request not found', () => pm.expect(json.message).to.eql('Service request not found'));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Self-approval guard (manual setup required)",
+      "item": [
+        {
+          "name": "Manager approves own request (expect 403)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{managerToken}}" }
+            ],
+            "body": { "mode": "none" },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/service-requests/{{managerOwnRequestId}}/approve",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "service-requests", "{{managerOwnRequestId}}", "approve"]
+            },
+            "description": "MANUAL SETUP: create a request while the user is a CUSTOMER, then promote that same user to MANAGER (or seed a request whose customerId equals the manager's userId). Put its id in managerOwnRequestId. Expected: 403 'You cannot approve your own service request'."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('403 Forbidden', () => pm.response.to.have.status(403));",
+                  "const json = pm.response.json();",
+                  "pm.test('success is false', () => pm.expect(json.success).to.eql(false));",
+                  "pm.test('message is the self-approval message', () => pm.expect(json.message).to.eql('You cannot approve your own service request'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Admin approves own request (expect 403)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{adminToken}}" }
+            ],
+            "body": { "mode": "none" },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/service-requests/{{adminOwnRequestId}}/approve",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "service-requests", "{{adminOwnRequestId}}", "approve"]
+            },
+            "description": "MANUAL SETUP: same as the manager case, but the request must belong to the admin user. Put its id in adminOwnRequestId. Expected: 403 'You cannot approve your own service request'."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('403 Forbidden', () => pm.response.to.have.status(403));",
+                  "const json = pm.response.json();",
+                  "pm.test('success is false', () => pm.expect(json.success).to.eql(false));",
+                  "pm.test('message is the self-approval message', () => pm.expect(json.message).to.eql('You cannot approve your own service request'));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Verify",
+      "item": [
+        {
+          "name": "Manager-approved request has APPROVED + AWAITING_ASSIGNMENT work order",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{managerToken}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/service-requests/{{managerApproveRequestId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "service-requests", "{{managerApproveRequestId}}"]
+            },
+            "description": "Reads the request back through the existing Feature 8 detail endpoint to prove the status and work order were persisted."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.test('request status is APPROVED', () => pm.expect(json.data.status).to.eql('APPROVED'));",
+                  "pm.test('workOrder exists', () => pm.expect(json.data.workOrder).to.be.an('object'));",
+                  "pm.test('workOrder status is AWAITING_ASSIGNMENT', () => pm.expect(json.data.workOrder.status).to.eql('AWAITING_ASSIGNMENT'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Admin-approved request has APPROVED + AWAITING_ASSIGNMENT work order",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{adminToken}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/service-requests/{{adminApproveRequestId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "service-requests", "{{adminApproveRequestId}}"]
+            },
+            "description": "Same persistence check for the admin-approved request."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.test('request status is APPROVED', () => pm.expect(json.data.status).to.eql('APPROVED'));",
+                  "pm.test('workOrder status is AWAITING_ASSIGNMENT', () => pm.expect(json.data.workOrder.status).to.eql('AWAITING_ASSIGNMENT'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Customer can see their approved request",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{customerToken}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/service-requests/{{managerApproveRequestId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "service-requests", "{{managerApproveRequestId}}"]
+            },
+            "description": "Confirms the approval is visible to the owning customer through the normal ownership-scoped detail endpoint."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.test('request status is APPROVED', () => pm.expect(json.data.status).to.eql('APPROVED'));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

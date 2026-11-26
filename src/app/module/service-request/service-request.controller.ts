@@ -121,9 +121,31 @@ const cancelServiceRequest = catchAsync(async (req: Request, res: Response) => {
 	});
 });
 
+const approveServiceRequest = catchAsync(
+	async (req: Request, res: Response) => {
+		const user = req.user;
+		if (!user) {
+			throw new AppError(httpStatus.UNAUTHORIZED, "You are not logged in");
+		}
+
+		const result = await ServiceRequestServices.approveServiceRequest(
+			req.params.id as string,
+			user,
+		);
+
+		sendResponse(res, {
+			statusCode: httpStatus.OK,
+			success: true,
+			message: "Service request approved successfully",
+			data: result,
+		});
+	},
+);
+
 export const ServiceRequestController = {
 	createServiceRequest,
 	getServiceRequests,
 	getServiceRequestById,
 	cancelServiceRequest,
+	approveServiceRequest,
 };

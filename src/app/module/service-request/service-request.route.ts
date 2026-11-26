@@ -28,6 +28,12 @@ router.delete(
 );
 
 router.post(
+	"/:id/approve",
+	auth(Role.MANAGER, Role.ADMIN),
+	ServiceRequestController.approveServiceRequest,
+);
+
+router.post(
 	"/",
 	auth(Role.CUSTOMER),
 	uploadAttachments.array("attachments", 3),

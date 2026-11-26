@@ -323,9 +323,61 @@ const cancelServiceRequest = async (
 	});
 };
 
+const approveServiceRequest = async (id: string, actor: IRequestActor) => {
+	const serviceRequest = await prisma.serviceRequest.findFirst({
+		where: { id, isDeleted: false },
+	});
+
+	if (!serviceRequest) {
+		throw new AppError(httpStatus.NOT_FOUND, "Service request not found");
+	}
+
+	if (serviceRequest.customerId === actor.userId) {
+		throw new AppError(
+			httpStatus.FORBIDDEN,
+			"You cannot approve your own service request",
+		);
+	}
+
+	assertTransition(
+		serviceRequestMachine,
+		serviceRequest.status,
+		ServiceRequestStatus.APPROVED,
+	);
+
+	return prisma.$transaction(async (tx) => {
+		await tx.workOrder.create({
+			data: {
+				serviceRequestId: serviceRequest.id,
+				status: WorkOrderStatus.AWAITING_ASSIGNMENT,
+			},
+		});
+
+		const updatedServiceRequest = await tx.serviceRequest.update({
+			where: { id: serviceRequest.id },
+			data: { status: ServiceRequestStatus.APPROVED },
+			include: {
+				workOrder: {
+					select: { id: true, status: true },
+				},
+			},
+		});
+
+		await createAuditLog(tx, {
+			userId: actor.userId,
+			action: AuditAction.REQUEST_APPROVED,
+			entityType: "ServiceRequest",
+			entityId: serviceRequest.id,
+		});
+
+		return updatedServiceRequest;
+	});
+};
+
 export const ServiceRequestServices = {
 	createServiceRequest,
 	getServiceRequests,
 	getServiceRequestById,
 	cancelServiceRequest,
+	approveServiceRequest,
 };
