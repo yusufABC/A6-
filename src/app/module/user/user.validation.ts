@@ -36,4 +36,27 @@ const UpdateAddressSchema = z
 		{ message: "At least one address field is required" },
 	);
 
-export const UserValidation = { UpdateProfileSchema, UpdateAddressSchema };
+const UserListQuerySchema = z.object({
+	page: z.coerce.number().int().positive().default(1),
+	limit: z.coerce.number().int().positive().max(100).default(10),
+	searchTerm: z.string().trim().optional(),
+	role: z.enum(["CUSTOMER", "TECHNICIAN", "MANAGER", "ADMIN"]).optional(),
+	status: z.enum(["ACTIVE", "SUSPENDED", "DELETED"]).optional(),
+	sortBy: z
+		.enum(["name", "email", "role", "status", "createdAt", "updatedAt"])
+		.default("createdAt"),
+	sortOrder: z.enum(["asc", "desc"]).default("desc"),
+});
+
+const UpdateUserRoleSchema = z
+	.object({
+		role: z.enum(["CUSTOMER", "TECHNICIAN", "MANAGER", "ADMIN"]),
+	})
+	.strict();
+
+export const UserValidation = {
+	UpdateProfileSchema,
+	UpdateAddressSchema,
+	UserListQuerySchema,
+	UpdateUserRoleSchema,
+};
