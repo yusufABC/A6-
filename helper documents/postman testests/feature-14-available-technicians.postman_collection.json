@@ -1,0 +1,428 @@
+{
+  "info": {
+    "name": "FSMS - Feature 14 - Available Technicians",
+    "description": "Postman collection for Feature 14.\n\nEndpoint:\n- GET /api/v1/technicians/available?workOrderId=...   (MANAGER, ADMIN)\n\nWhat it does:\n- Loads the work order, then its service request, then the service requiredSkill.\n- Returns only technicians whose TechnicianProfile.skills contains that skill (trim + lowercase comparison).\n- Excludes technicians whose User is SUSPENDED, DELETED or isDeleted, deleted TechnicianProfiles, and the customer who created the request.\n- Returns only: id, name, professionalTitle, skills, serviceAreas, averageRating.\n\nSetup:\n1. Import this collection.\n2. Open the collection Variables tab and set baseUrl, managerEmail/managerPassword, adminEmail/adminPassword, customerEmail/customerPassword, technicianEmail/technicianPassword.\n3. Start the server: npm run dev\n4. Run the folders in order: 0 Auth + Setup -> 1 Available Technicians -> 2 Access Control -> 3 Validation.\n\nImportant:\n- Folder 0 discovers a workOrderId automatically from GET /api/v1/service-requests. You must already have at least one APPROVED service request (feature 9) so a work order exists. If none exists, approve a request first, then re-run folder 0.\n- The returned id is the TechnicianProfile.id (not the User.id).\n- Suspended/deleted exclusion is a data rule, not a separate endpoint. To verify manually: suspend the seeded technician (feature 6) or soft-delete the profile (feature 13), then re-run folder 1 and confirm the technician disappears.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:5000" },
+    { "key": "managerEmail", "value": "manager@example.com" },
+    { "key": "managerPassword", "value": "" },
+    { "key": "adminEmail", "value": "admin@example.com" },
+    { "key": "adminPassword", "value": "" },
+    { "key": "customerEmail", "value": "customer@example.com" },
+    { "key": "customerPassword", "value": "" },
+    { "key": "technicianEmail", "value": "technician@example.com" },
+    { "key": "technicianPassword", "value": "" },
+    { "key": "managerToken", "value": "" },
+    { "key": "adminToken", "value": "" },
+    { "key": "customerToken", "value": "" },
+    { "key": "technicianToken", "value": "" },
+    { "key": "workOrderId", "value": "" },
+    { "key": "serviceRequestId", "value": "" },
+    { "key": "requiredSkill", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "0. Auth + Setup (run first)",
+      "item": [
+        {
+          "name": "Login as MANAGER",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Manager login succeeds', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json.success).to.eql(true);",
+                  "  pm.expect(json.data.role).to.eql('MANAGER');",
+                  "  pm.collectionVariables.set('managerToken', json.data.accessToken);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{managerEmail}}\",\n  \"password\": \"{{managerPassword}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/api/v1/auth/login",
+            "auth": { "type": "noauth" }
+          }
+        },
+        {
+          "name": "Login as ADMIN",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Admin login succeeds', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json.success).to.eql(true);",
+                  "  pm.expect(json.data.role).to.eql('ADMIN');",
+                  "  pm.collectionVariables.set('adminToken', json.data.accessToken);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{adminEmail}}\",\n  \"password\": \"{{adminPassword}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/api/v1/auth/login",
+            "auth": { "type": "noauth" }
+          }
+        },
+        {
+          "name": "Login as CUSTOMER",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Customer login succeeds', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.collectionVariables.set('customerToken', pm.response.json().data.accessToken);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{customerEmail}}\",\n  \"password\": \"{{customerPassword}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/api/v1/auth/login",
+            "auth": { "type": "noauth" }
+          }
+        },
+        {
+          "name": "Login as TECHNICIAN",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Technician login succeeds', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.collectionVariables.set('technicianToken', pm.response.json().data.accessToken);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{technicianEmail}}\",\n  \"password\": \"{{technicianPassword}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/api/v1/auth/login",
+            "auth": { "type": "noauth" }
+          }
+        },
+        {
+          "name": "Discover workOrderId (GET /service-requests)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Service request list succeeds', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "const json = pm.response.json();",
+                  "const withWorkOrder = (json.data || []).find((row) => row.workOrder && row.workOrder.id);",
+                  "pm.test('A service request with a work order exists (approve a request first)', () => {",
+                  "  pm.expect(withWorkOrder, 'No work order found. Approve a service request (feature 9), then re-run folder 0.').to.exist;",
+                  "});",
+                  "if (withWorkOrder) {",
+                  "  pm.collectionVariables.set('workOrderId', withWorkOrder.workOrder.id);",
+                  "  pm.collectionVariables.set('serviceRequestId', withWorkOrder.id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/service-requests?page=1&limit=100",
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{managerToken}}", "type": "string" }]
+            }
+          }
+        },
+        {
+          "name": "Discover requiredSkill (GET /service-requests/:id)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Service request detail succeeds', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "const d = pm.response.json().data;",
+                  "pm.test('Request has a service requiredSkill', () => {",
+                  "  pm.expect(d.service.requiredSkill).to.be.a('string').and.not.empty;",
+                  "});",
+                  "pm.collectionVariables.set('requiredSkill', d.service.requiredSkill);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/service-requests/{{serviceRequestId}}",
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{managerToken}}", "type": "string" }]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "1. Available Technicians",
+      "item": [
+        {
+          "name": "GET /technicians/available (MANAGER)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Available technicians returns 200', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json.success).to.eql(true);",
+                  "  pm.expect(json.data).to.be.an('array');",
+                  "});",
+                  "pm.test('Each row has exactly the required fields', () => {",
+                  "  const rows = pm.response.json().data;",
+                  "  const required = ['id','name','professionalTitle','skills','serviceAreas','averageRating'];",
+                  "  rows.forEach((row) => {",
+                  "    required.forEach((key) => pm.expect(row).to.have.property(key));",
+                  "    ['email','phone','userId','workingDays','preferredHours','totalReviews','deletedAt'].forEach((key) => {",
+                  "      pm.expect(row).to.not.have.property(key);",
+                  "    });",
+                  "    pm.expect(row.id).to.be.a('string');",
+                  "    pm.expect(row.name).to.be.a('string');",
+                  "    pm.expect(row.averageRating === null || typeof row.averageRating === 'number').to.eql(true);",
+                  "  });",
+                  "});",
+                  "pm.test('Every returned technician has the required skill (case-insensitive)', () => {",
+                  "  const requiredSkill = (pm.collectionVariables.get('requiredSkill') || '').trim().toLowerCase();",
+                  "  if (!requiredSkill) { return; }",
+                  "  pm.response.json().data.forEach((row) => {",
+                  "    const skills = Array.isArray(row.skills) ? row.skills : [];",
+                  "    const hasSkill = skills.some((skill) => typeof skill === 'string' && skill.trim().toLowerCase() === requiredSkill);",
+                  "    pm.expect(hasSkill, row.name + ' must have skill: ' + requiredSkill).to.eql(true);",
+                  "  });",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/technicians/available?workOrderId={{workOrderId}}",
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{managerToken}}", "type": "string" }]
+            }
+          }
+        },
+        {
+          "name": "GET /technicians/available (ADMIN)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Admin can access available technicians', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().data).to.be.an('array');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/technicians/available?workOrderId={{workOrderId}}",
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{adminToken}}", "type": "string" }]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. Access Control",
+      "item": [
+        {
+          "name": "CUSTOMER calls /available (expect 403)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('Customer is forbidden', () => { pm.response.to.have.status(403); });"]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/technicians/available?workOrderId={{workOrderId}}",
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{customerToken}}", "type": "string" }]
+            }
+          }
+        },
+        {
+          "name": "TECHNICIAN calls /available (expect 403)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('Technician is forbidden', () => { pm.response.to.have.status(403); });"]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/technicians/available?workOrderId={{workOrderId}}",
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{technicianToken}}", "type": "string" }]
+            }
+          }
+        },
+        {
+          "name": "No token (expect 401)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('No token gives 401', () => { pm.response.to.have.status(401); });"]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/technicians/available?workOrderId={{workOrderId}}",
+            "auth": { "type": "noauth" }
+          }
+        }
+      ]
+    },
+    {
+      "name": "3. Validation",
+      "item": [
+        {
+          "name": "Missing workOrderId (expect 400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('workOrderId is required', () => { pm.response.to.have.status(400); });"]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/technicians/available",
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{managerToken}}", "type": "string" }]
+            }
+          }
+        },
+        {
+          "name": "Blank workOrderId (expect 400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('Blank workOrderId rejected', () => { pm.response.to.have.status(400); });"]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/technicians/available?workOrderId=%20%20",
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{managerToken}}", "type": "string" }]
+            }
+          }
+        },
+        {
+          "name": "Unknown workOrderId (expect 404)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('Unknown work order gives 404', () => { pm.response.to.have.status(404); });"]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/technicians/available?workOrderId=00000000-0000-0000-0000-000000000000",
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{managerToken}}", "type": "string" }]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

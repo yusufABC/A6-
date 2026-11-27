@@ -1,0 +1,470 @@
+{
+  "info": {
+    "name": "FSMS - Feature 16 - Assignment Accept and Reject",
+    "description": "Postman collection for Feature 16: Assignment Accept & Reject.\n\nEndpoints:\n- GET /api/v1/assignments (TECHNICIAN sees own only; MANAGER/ADMIN see all, pagination & status filter)\n- GET /api/v1/assignments/:id (TECHNICIAN sees own only; MANAGER/ADMIN see any)\n- POST /api/v1/assignments/:id/accept (TECHNICIAN only, own assignment only, moves Assignment to ACCEPTED, WorkOrder to SCHEDULED, requires active appointment, audits ASSIGNMENT_ACCEPTED, notifies customer)\n- POST /api/v1/assignments/:id/reject (TECHNICIAN only, own assignment only, body rejectionReason required, moves Assignment to REJECTED, appointment to CANCELLED, WorkOrder to AWAITING_ASSIGNMENT, audits ASSIGNMENT_REJECTED with reason, notifies customer and managers/admins)\n\nSetup:\n1. Import this JSON into Postman.\n2. Configure collection variables: baseUrl, technicianEmail/Password, managerEmail/Password, etc.\n3. Run folder '0. Auth + Setup' to obtain auth tokens.\n4. Run folder '1. GET Assignments'.\n5. Run folder '2. Accept Assignment'.\n6. Run folder '3. Reject Assignment'.\n7. Run folder '4. Access Control & Validation'.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:5000" },
+    { "key": "technicianEmail", "value": "technician@example.com" },
+    { "key": "technicianPassword", "value": "" },
+    { "key": "otherTechnicianEmail", "value": "other_technician@example.com" },
+    { "key": "otherTechnicianPassword", "value": "" },
+    { "key": "managerEmail", "value": "manager@example.com" },
+    { "key": "managerPassword", "value": "" },
+    { "key": "customerEmail", "value": "customer@example.com" },
+    { "key": "customerPassword", "value": "" },
+    { "key": "technicianToken", "value": "" },
+    { "key": "otherTechnicianToken", "value": "" },
+    { "key": "managerToken", "value": "" },
+    { "key": "customerToken", "value": "" },
+    { "key": "assignmentId", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "0. Auth + Setup",
+      "item": [
+        {
+          "name": "Login as TECHNICIAN",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Technician login succeeds', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json.success).to.eql(true);",
+                  "  pm.collectionVariables.set('technicianToken', json.data.accessToken);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{technicianEmail}}\",\n  \"password\": \"{{technicianPassword}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/api/v1/auth/login",
+            "auth": { "type": "noauth" }
+          }
+        },
+        {
+          "name": "Login as MANAGER",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Manager login succeeds', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json.success).to.eql(true);",
+                  "  pm.collectionVariables.set('managerToken', json.data.accessToken);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{managerEmail}}\",\n  \"password\": \"{{managerPassword}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/api/v1/auth/login",
+            "auth": { "type": "noauth" }
+          }
+        },
+        {
+          "name": "Login as CUSTOMER",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Customer login succeeds', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json.success).to.eql(true);",
+                  "  pm.collectionVariables.set('customerToken', json.data.accessToken);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{customerEmail}}\",\n  \"password\": \"{{customerPassword}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/api/v1/auth/login",
+            "auth": { "type": "noauth" }
+          }
+        }
+      ]
+    },
+    {
+      "name": "1. GET Assignments",
+      "item": [
+        {
+          "name": "GET /assignments (Technician - own only)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('List assignments succeeds', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json.success).to.eql(true);",
+                  "  pm.expect(json.data).to.be.an('array');",
+                  "  if (json.data.length > 0) {",
+                  "    pm.collectionVariables.set('assignmentId', json.data[0].id);",
+                  "  }",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{technicianToken}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/assignments?page=1&limit=10",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "assignments"],
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "limit", "value": "10" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "GET /assignments (Status filter - PENDING)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Filtered assignments succeeds', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json.success).to.eql(true);",
+                  "  json.data.forEach(item => {",
+                  "    pm.expect(item.status).to.eql('PENDING');",
+                  "  });",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{technicianToken}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/assignments?status=PENDING",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "assignments"],
+              "query": [
+                { "key": "status", "value": "PENDING" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "GET /assignments (Manager - sees all)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Manager sees all assignments', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json.success).to.eql(true);",
+                  "  pm.expect(json.data).to.be.an('array');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{managerToken}}" }
+            ],
+            "url": "{{baseUrl}}/api/v1/assignments"
+          }
+        },
+        {
+          "name": "GET /assignments/:id (Detail)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Assignment detail retrieved', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json.success).to.eql(true);",
+                  "  pm.expect(json.data.id).to.eql(pm.collectionVariables.get('assignmentId'));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{technicianToken}}" }
+            ],
+            "url": "{{baseUrl}}/api/v1/assignments/{{assignmentId}}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. Accept Assignment",
+      "item": [
+        {
+          "name": "POST /assignments/:id/accept (Technician - Happy path)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Assignment accepted successfully', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json.success).to.eql(true);",
+                  "  pm.expect(json.data.status).to.eql('ACCEPTED');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{technicianToken}}" }
+            ],
+            "url": "{{baseUrl}}/api/v1/assignments/{{assignmentId}}/accept"
+          }
+        },
+        {
+          "name": "POST /assignments/:id/accept (Already accepted -> 400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Accepting already accepted returns 400', () => {",
+                  "  pm.response.to.have.status(400);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{technicianToken}}" }
+            ],
+            "url": "{{baseUrl}}/api/v1/assignments/{{assignmentId}}/accept"
+          }
+        }
+      ]
+    },
+    {
+      "name": "3. Reject Assignment",
+      "item": [
+        {
+          "name": "POST /assignments/:id/reject (Missing rejectionReason -> 400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Missing rejectionReason fails with 400', () => {",
+                  "  pm.response.to.have.status(400);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{technicianToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/api/v1/assignments/{{assignmentId}}/reject"
+          }
+        },
+        {
+          "name": "POST /assignments/:id/reject (Technician - Happy path)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Assignment rejected successfully', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json.success).to.eql(true);",
+                  "  pm.expect(json.data.status).to.eql('REJECTED');",
+                  "  pm.expect(json.data.rejectionReason).to.eql('Outside my service area today');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{technicianToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"rejectionReason\": \"Outside my service area today\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/api/v1/assignments/{{assignmentId}}/reject"
+          }
+        }
+      ]
+    },
+    {
+      "name": "4. Access Control & Validation",
+      "item": [
+        {
+          "name": "POST /assignments/:id/accept (Manager role -> 403 Forbidden)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Manager forbidden from accept', () => {",
+                  "  pm.response.to.have.status(403);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{managerToken}}" }
+            ],
+            "url": "{{baseUrl}}/api/v1/assignments/{{assignmentId}}/accept"
+          }
+        },
+        {
+          "name": "POST /assignments/:id/reject (Manager role -> 403 Forbidden)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Manager forbidden from reject', () => {",
+                  "  pm.response.to.have.status(403);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{managerToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"rejectionReason\": \"Should not be allowed\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/api/v1/assignments/{{assignmentId}}/reject"
+          }
+        },
+        {
+          "name": "GET /assignments (Customer role -> 403 Forbidden)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Customer cannot access assignments', () => {",
+                  "  pm.response.to.have.status(403);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{customerToken}}" }
+            ],
+            "url": "{{baseUrl}}/api/v1/assignments"
+          }
+        },
+        {
+          "name": "GET /assignments (Unauthenticated -> 401 Unauthorized)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Unauthenticated fails with 401', () => {",
+                  "  pm.response.to.have.status(401);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/v1/assignments"
+          }
+        }
+      ]
+    }
+  ]
+}

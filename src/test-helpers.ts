@@ -1,5 +1,5 @@
 import { AppError } from "./app/utils/AppError";
-import { type AuditAction, createAuditLog } from "./app/utils/auditLog";
+import { AuditAction, createAuditLog } from "./app/utils/auditLog";
 import {
 	assertTransition,
 	assignmentMachine,
@@ -90,7 +90,7 @@ const main = async () => {
 		await prisma.$transaction(async (tx) => {
 			await createAuditLog(tx, {
 				userId: user.id,
-				action: "TEST_ACTION",
+				action: AuditAction.RECORD_DELETED,
 				entityType: "Test",
 				entityId: "test-1",
 				metadata: { reason: "helper test" },
@@ -111,7 +111,7 @@ const main = async () => {
 			await prisma.$transaction(async (tx) => {
 				await createAuditLog(tx, {
 					userId: user.id,
-					action: "TEST_ROLLBACK",
+					action: AuditAction.RECORD_DELETED,
 					entityType: "Test",
 					entityId: "rollback-1",
 				});

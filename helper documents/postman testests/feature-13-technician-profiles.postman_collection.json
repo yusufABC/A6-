@@ -1,0 +1,855 @@
+{
+  "info": {
+    "name": "FSMS - Feature 13 - Technician Profiles",
+    "description": "Postman collection for Feature 13.\n\nEndpoints:\n- GET   /api/v1/technicians                     (ADMIN, paginated + searchTerm)\n- PATCH /api/v1/technicians/:id                 (ADMIN, edit profile fields or soft delete)\n- GET   /api/v1/technicians/:id                 (PUBLIC)\n- GET   /api/v1/technicians/:id/feedbacks       (PUBLIC)\n- GET   /api/v1/technicians/me/profile          (TECHNICIAN)\n- PATCH /api/v1/technicians/me/profile          (TECHNICIAN)\n- GET   /api/v1/technicians/me/feedbacks        (TECHNICIAN)\n- GET   /api/v1/technicians/me/stats            (TECHNICIAN)\n\nSetup:\n1. Import this collection.\n2. Open the collection Variables tab and set baseUrl, adminEmail/adminPassword, technicianEmail/technicianPassword, customerEmail/customerPassword.\n3. Start the server: npm run dev\n4. Run the folders in order: 0 Auth + Setup -> 1 Public Profile -> 2 Public Feedbacks -> 3 Technician Self -> 4 Admin List -> 5 Admin Update -> 6 Access Control -> 7 Validation.\n\nNotes:\n- The technician profile id is discovered automatically from GET /me/profile (technician login) in folder 0. No manual id needed.\n- The :id used by this feature is the TechnicianProfile.id (not the User.id).\n- Folder 5 soft-deletes the seeded technician profile. If you run the collection again after that, restore the row in Prisma Studio (isDeleted=false, deletedAt=null) or re-seed before running folder 1.\n- Public profile tests assert that email, phone and address fields are NOT returned.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:5000" },
+    { "key": "adminEmail", "value": "admin@example.com" },
+    { "key": "adminPassword", "value": "" },
+    { "key": "technicianEmail", "value": "technician@example.com" },
+    { "key": "technicianPassword", "value": "" },
+    { "key": "customerEmail", "value": "customer@example.com" },
+    { "key": "customerPassword", "value": "" },
+    { "key": "adminToken", "value": "" },
+    { "key": "technicianToken", "value": "" },
+    { "key": "customerToken", "value": "" },
+    { "key": "technicianProfileId", "value": "" },
+    { "key": "technicianUserId", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "0. Auth + Setup (run first)",
+      "item": [
+        {
+          "name": "Login as ADMIN",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Admin login succeeds', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json.success).to.eql(true);",
+                  "  pm.collectionVariables.set('adminToken', json.data.accessToken);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{adminEmail}}\",\n  \"password\": \"{{adminPassword}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/api/v1/auth/login",
+            "auth": { "type": "noauth" }
+          }
+        },
+        {
+          "name": "Login as TECHNICIAN",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Technician login succeeds', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json.data.role).to.eql('TECHNICIAN');",
+                  "  pm.collectionVariables.set('technicianToken', json.data.accessToken);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{technicianEmail}}\",\n  \"password\": \"{{technicianPassword}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/api/v1/auth/login",
+            "auth": { "type": "noauth" }
+          }
+        },
+        {
+          "name": "Login as CUSTOMER",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Customer login succeeds', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const json = pm.response.json();",
+                  "  pm.collectionVariables.set('customerToken', json.data.accessToken);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{customerEmail}}\",\n  \"password\": \"{{customerPassword}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/api/v1/auth/login",
+            "auth": { "type": "noauth" }
+          }
+        },
+        {
+          "name": "Discover technician profile id (GET /me/profile)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Technician profile discovered', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json.data.id).to.be.a('string');",
+                  "  pm.collectionVariables.set('technicianProfileId', json.data.id);",
+                  "  pm.collectionVariables.set('technicianUserId', json.data.user.id);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/technicians/me/profile",
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{technicianToken}}", "type": "string" }]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "1. Public Profile",
+      "item": [
+        {
+          "name": "GET public profile (no token)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Public profile returns 200 without a token', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json.success).to.eql(true);",
+                  "  pm.expect(json.data.id).to.eql(pm.collectionVariables.get('technicianProfileId'));",
+                  "});",
+                  "pm.test('Public profile has the required fields', () => {",
+                  "  const d = pm.response.json().data;",
+                  "  ['id','name','imageUrl','professionalTitle','yearsOfExperience','bio','skills','serviceAreas','averageRating','totalReviews'].forEach((key) => {",
+                  "    pm.expect(d).to.have.property(key);",
+                  "  });",
+                  "});",
+                  "pm.test('Public profile never exposes email, phone or address', () => {",
+                  "  const d = pm.response.json().data;",
+                  "  ['email','phone','addressLine','city','district','postalCode','userId','workingDays','preferredHours'].forEach((key) => {",
+                  "    pm.expect(d).to.not.have.property(key);",
+                  "  });",
+                  "});",
+                  "pm.test('averageRating is null or a number and totalReviews is a number', () => {",
+                  "  const d = pm.response.json().data;",
+                  "  pm.expect(d.averageRating === null || typeof d.averageRating === 'number').to.eql(true);",
+                  "  pm.expect(d.totalReviews).to.be.a('number');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/technicians/{{technicianProfileId}}",
+            "auth": { "type": "noauth" }
+          }
+        },
+        {
+          "name": "GET unknown technician id (expect 404)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('Unknown id gives 404', () => { pm.response.to.have.status(404); });"]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/technicians/00000000-0000-0000-0000-000000000000",
+            "auth": { "type": "noauth" }
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. Public Feedbacks",
+      "item": [
+        {
+          "name": "GET public feedbacks (no token)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Public feedbacks return 200 with meta', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json.data).to.be.an('array');",
+                  "  pm.expect(json.meta).to.include.keys('page','limit','total','totalPages');",
+                  "});",
+                  "pm.test('Feedbacks do not expose customer email, phone or address', () => {",
+                  "  const json = pm.response.json();",
+                  "  json.data.forEach((fb) => {",
+                  "    if (fb.customer) {",
+                  "      pm.expect(fb.customer).to.not.have.property('email');",
+                  "      pm.expect(fb.customer).to.not.have.property('phone');",
+                  "      pm.expect(fb.customer).to.not.have.property('addressLine');",
+                  "    }",
+                  "  });",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/technicians/{{technicianProfileId}}/feedbacks?page=1&limit=10&sortBy=createdAt&sortOrder=desc",
+            "auth": { "type": "noauth" }
+          }
+        },
+        {
+          "name": "Invalid feedback sortBy (expect 400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('Invalid sortBy rejected', () => { pm.response.to.have.status(400); });"]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/technicians/{{technicianProfileId}}/feedbacks?sortBy=comment",
+            "auth": { "type": "noauth" }
+          }
+        }
+      ]
+    },
+    {
+      "name": "3. Technician Self",
+      "item": [
+        {
+          "name": "GET /me/profile",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Own profile returns 200', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json.data.id).to.eql(pm.collectionVariables.get('technicianProfileId'));",
+                  "  pm.expect(json.data.user).to.be.an('object');",
+                  "  pm.expect(json.data.user.email).to.be.a('string');",
+                  "  pm.expect(json.data).to.have.property('workingDays');",
+                  "  pm.expect(json.data).to.have.property('preferredHours');",
+                  "  pm.expect(json.data).to.have.property('averageRating');",
+                  "  pm.expect(json.data).to.have.property('totalReviews');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/technicians/me/profile",
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{technicianToken}}", "type": "string" }]
+            }
+          }
+        },
+        {
+          "name": "PATCH /me/profile (all allowed fields)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Profile updated', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const d = pm.response.json().data;",
+                  "  pm.expect(d.professionalTitle).to.eql('Senior AC Technician');",
+                  "  pm.expect(d.yearsOfExperience).to.eql(8);",
+                  "  pm.expect(d.bio).to.include('Updated bio');",
+                  "  pm.expect(d.skills).to.include('Electrical');",
+                  "  pm.expect(d.serviceAreas).to.include('Gazipur');",
+                  "  pm.expect(d.preferredHours).to.eql('08:00-20:00');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"professionalTitle\": \"Senior AC Technician\",\n  \"yearsOfExperience\": 8,\n  \"bio\": \"Updated bio from the technician profile test.\",\n  \"skills\": [\"AC Repair\", \"Electrical\"],\n  \"serviceAreas\": [\"Dhaka\", \"Gazipur\"],\n  \"workingDays\": { \"sun\": true, \"mon\": true, \"tue\": true, \"wed\": true, \"thu\": true, \"fri\": false, \"sat\": true },\n  \"preferredHours\": \"08:00-20:00\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/api/v1/technicians/me/profile",
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{technicianToken}}", "type": "string" }]
+            }
+          }
+        },
+        {
+          "name": "GET /me/feedbacks",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Own feedbacks return 200 with meta', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json.data).to.be.an('array');",
+                  "  pm.expect(json.meta).to.include.keys('page','limit','total','totalPages');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/technicians/me/feedbacks?page=1&limit=10&sortBy=createdAt&sortOrder=desc",
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{technicianToken}}", "type": "string" }]
+            }
+          }
+        },
+        {
+          "name": "GET /me/stats",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Own stats return simple counts', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const d = pm.response.json().data;",
+                  "  pm.expect(d.assignmentsByStatus).to.include.keys('PENDING','ACCEPTED','REJECTED','CANCELLED');",
+                  "  pm.expect(d.totalAssignments).to.be.a('number');",
+                  "  pm.expect(d.completedJobs).to.be.a('number');",
+                  "  pm.expect(d.averageRating === null || typeof d.averageRating === 'number').to.eql(true);",
+                  "  pm.expect(d.totalReviews).to.be.a('number');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/technicians/me/stats",
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{technicianToken}}", "type": "string" }]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "4. Admin List",
+      "item": [
+        {
+          "name": "GET /technicians (paginated)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Admin list succeeds with meta', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json.data).to.be.an('array');",
+                  "  pm.expect(json.meta).to.include.keys('page','limit','total','totalPages');",
+                  "});",
+                  "pm.test('List rows include user and live rating fields', () => {",
+                  "  const json = pm.response.json();",
+                  "  json.data.forEach((row) => {",
+                  "    pm.expect(row.isDeleted).to.eql(false);",
+                  "    pm.expect(row.user).to.be.an('object');",
+                  "    pm.expect(row).to.have.property('averageRating');",
+                  "    pm.expect(row).to.have.property('totalReviews');",
+                  "  });",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/technicians?page=1&limit=10&sortBy=createdAt&sortOrder=desc",
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{adminToken}}", "type": "string" }]
+            }
+          }
+        },
+        {
+          "name": "GET /technicians (searchTerm + pagination)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Search list succeeds', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json.meta.page).to.eql(1);",
+                  "  pm.expect(json.meta.limit).to.eql(5);",
+                  "  pm.expect(json.data).to.be.an('array');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/technicians?page=1&limit=5&searchTerm=AC&sortBy=professionalTitle&sortOrder=asc",
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{adminToken}}", "type": "string" }]
+            }
+          }
+        },
+        {
+          "name": "Invalid sortBy (expect 400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('Invalid sortBy rejected', () => { pm.response.to.have.status(400); });"]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/technicians?sortBy=email",
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{adminToken}}", "type": "string" }]
+            }
+          }
+        },
+        {
+          "name": "Limit over max (expect 400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('limit > 100 rejected', () => { pm.response.to.have.status(400); });"]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/technicians?page=1&limit=1000",
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{adminToken}}", "type": "string" }]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "5. Admin Update",
+      "item": [
+        {
+          "name": "PATCH /technicians/:id (edit profile fields)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Admin profile edit succeeds', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const d = pm.response.json().data;",
+                  "  pm.expect(d.professionalTitle).to.eql('Lead Technician');",
+                  "  pm.expect(d.yearsOfExperience).to.eql(10);",
+                  "  pm.expect(d.skills).to.include('Plumbing');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"professionalTitle\": \"Lead Technician\",\n  \"yearsOfExperience\": 10,\n  \"bio\": \"Admin-edited bio.\",\n  \"skills\": [\"AC Repair\", \"Plumbing\"],\n  \"serviceAreas\": [\"Dhaka\"],\n  \"workingDays\": { \"sun\": true, \"mon\": true, \"tue\": true, \"wed\": true, \"thu\": true, \"fri\": false, \"sat\": false },\n  \"preferredHours\": \"10:00-19:00\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/api/v1/technicians/{{technicianProfileId}}",
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{adminToken}}", "type": "string" }]
+            }
+          }
+        },
+        {
+          "name": "PATCH /technicians/:id (soft delete)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Admin soft delete succeeds', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const d = pm.response.json().data;",
+                  "  pm.expect(d.isDeleted).to.eql(true);",
+                  "  pm.expect(d.deletedAt).to.not.eql(null);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"isDeleted\": true\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/api/v1/technicians/{{technicianProfileId}}",
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{adminToken}}", "type": "string" }]
+            }
+          }
+        },
+        {
+          "name": "GET public profile after soft delete (expect 404)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('Soft-deleted profile is hidden', () => { pm.response.to.have.status(404); });"]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/technicians/{{technicianProfileId}}",
+            "auth": { "type": "noauth" }
+          }
+        },
+        {
+          "name": "Admin list after soft delete (id absent)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Soft-deleted profile is not listed', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const id = pm.collectionVariables.get('technicianProfileId');",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json.data.some((row) => row.id === id)).to.eql(false);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/technicians?page=1&limit=100",
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{adminToken}}", "type": "string" }]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "6. Access Control",
+      "item": [
+        {
+          "name": "CUSTOMER calls /me/profile (expect 403)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('Customer is forbidden', () => { pm.response.to.have.status(403); });"]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/technicians/me/profile",
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{customerToken}}", "type": "string" }]
+            }
+          }
+        },
+        {
+          "name": "ADMIN calls /me/profile (expect 403)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('Admin is forbidden on technician self routes', () => { pm.response.to.have.status(403); });"]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/technicians/me/profile",
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{adminToken}}", "type": "string" }]
+            }
+          }
+        },
+        {
+          "name": "TECHNICIAN calls admin list (expect 403)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('Technician is forbidden on admin list', () => { pm.response.to.have.status(403); });"]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/technicians",
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{technicianToken}}", "type": "string" }]
+            }
+          }
+        },
+        {
+          "name": "No token on admin list (expect 401)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('No token gives 401', () => { pm.response.to.have.status(401); });"]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/technicians",
+            "auth": { "type": "noauth" }
+          }
+        }
+      ]
+    },
+    {
+      "name": "7. Validation",
+      "item": [
+        {
+          "name": "PATCH /me/profile with {} (expect 400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('Empty body rejected', () => { pm.response.to.have.status(400); });"]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/api/v1/technicians/me/profile",
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{technicianToken}}", "type": "string" }]
+            }
+          }
+        },
+        {
+          "name": "PATCH /me/profile negative yearsOfExperience (expect 400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('Negative experience rejected', () => { pm.response.to.have.status(400); });"]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"yearsOfExperience\": -1\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/api/v1/technicians/me/profile",
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{technicianToken}}", "type": "string" }]
+            }
+          }
+        },
+        {
+          "name": "PATCH /me/profile bad preferredHours (expect 400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('Bad preferredHours rejected', () => { pm.response.to.have.status(400); });"]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"preferredHours\": \"9am-6pm\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/api/v1/technicians/me/profile",
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{technicianToken}}", "type": "string" }]
+            }
+          }
+        },
+        {
+          "name": "PATCH /me/profile unknown field (expect 400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('Unknown field rejected (no mass assignment)', () => { pm.response.to.have.status(400); });"]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Hacker\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/api/v1/technicians/me/profile",
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{technicianToken}}", "type": "string" }]
+            }
+          }
+        },
+        {
+          "name": "Admin PATCH isDeleted + other field (expect 400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('isDeleted cannot be combined with edits', () => { pm.response.to.have.status(400); });"]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"isDeleted\": true,\n  \"bio\": \"nope\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/api/v1/technicians/{{technicianProfileId}}",
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{adminToken}}", "type": "string" }]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}
