@@ -18,3 +18,9 @@ export interface IAssignmentListQuery {
 export interface IRejectAssignmentPayload {
 	rejectionReason: string;
 }
+
+export interface IReassignPayload {
+	technicianId: string;
+	startTime?: Date;
+	endTime?: Date;
+}

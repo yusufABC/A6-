@@ -32,4 +32,11 @@ router.post(
 	AssignmentController.rejectAssignment,
 );
 
+router.patch(
+	"/:id",
+	auth(Role.MANAGER, Role.ADMIN),
+	validateRequest(AssignmentValidation.ReassignAssignmentSchema),
+	AssignmentController.reassignAssignment,
+);
+
 export const AssignmentRoutes = router;

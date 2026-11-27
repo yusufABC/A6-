@@ -1,0 +1,160 @@
+{
+  "info": {
+    "name": "FSMS - Feature 17 - Reassign, Reschedule and Cancel Appointment",
+    "description": "Postman collection for Feature 17.\n\nEndpoints:\n- PATCH /api/v1/assignments/:id (MANAGER, ADMIN) - Reassign technician, updates same assignment row, cancels old appointment, creates new appointment, audits ASSIGNMENT_REPLACED, notifies old/new technicians and customer.\n- PATCH /api/v1/appointments/:id (MANAGER, ADMIN) - Reschedule appointment times, advisory lock & overlap check, audits APPOINTMENT_RESCHEDULED, notifies technician and customer.\n- DELETE /api/v1/appointments/:id (MANAGER, ADMIN) - Cancel appointment, audits APPOINTMENT_CANCELLED, notifies technician.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:5000" },
+    { "key": "managerEmail", "value": "manager@example.com" },
+    { "key": "managerPassword", "value": "" },
+    { "key": "managerToken", "value": "" },
+    { "key": "assignmentId", "value": "" },
+    { "key": "appointmentId", "value": "" },
+    { "key": "newTechnicianId", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "0. Auth + Setup",
+      "item": [
+        {
+          "name": "Login as MANAGER",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Manager login succeeds', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json.success).to.eql(true);",
+                  "  pm.collectionVariables.set('managerToken', json.data.accessToken);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{managerEmail}}\",\n  \"password\": \"{{managerPassword}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/api/v1/auth/login",
+            "auth": { "type": "noauth" }
+          }
+        }
+      ]
+    },
+    {
+      "name": "1. Reassign Assignment",
+      "item": [
+        {
+          "name": "PATCH /assignments/:id (Reassign Technician)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Reassign assignment succeeds', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json.success).to.eql(true);",
+                  "  pm.expect(json.data.status).to.eql('PENDING');",
+                  "  if (json.data.appointment) {",
+                  "    pm.collectionVariables.set('appointmentId', json.data.appointment.id);",
+                  "  }",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{managerToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"technicianId\": \"{{newTechnicianId}}\",\n  \"startTime\": \"2026-11-10T10:00:00.000Z\",\n  \"endTime\": \"2026-11-10T11:30:00.000Z\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/api/v1/assignments/{{assignmentId}}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. Reschedule Appointment",
+      "item": [
+        {
+          "name": "PATCH /appointments/:id (Reschedule Appointment)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Reschedule appointment succeeds', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json.success).to.eql(true);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{managerToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"startTime\": \"2026-11-10T12:00:00.000Z\",\n  \"endTime\": \"2026-11-10T13:30:00.000Z\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/api/v1/appointments/{{appointmentId}}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "3. Cancel Appointment",
+      "item": [
+        {
+          "name": "DELETE /appointments/:id (Cancel Appointment)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Cancel appointment succeeds', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json.success).to.eql(true);",
+                  "  pm.expect(json.data.status).to.eql('CANCELLED');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{managerToken}}" }
+            ],
+            "url": "{{baseUrl}}/api/v1/appointments/{{appointmentId}}"
+          }
+        }
+      ]
+    }
+  ]
+}

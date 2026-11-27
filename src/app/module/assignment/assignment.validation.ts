@@ -18,7 +18,33 @@ const RejectAssignmentSchema = z
 	})
 	.strict();
 
+const dateTimeSchema = z.preprocess(
+	(value) => (value === "" || value === null ? undefined : value),
+	z.coerce.date().optional(),
+);
+
+const ReassignAssignmentSchema = z
+	.object({
+		technicianId: z.string().trim().min(1, "technicianId is required"),
+		startTime: dateTimeSchema,
+		endTime: dateTimeSchema,
+	})
+	.strict()
+	.refine(
+		(data) => {
+			if (data.startTime && data.endTime) {
+				return data.endTime.getTime() > data.startTime.getTime();
+			}
+			return true;
+		},
+		{
+			message: "endTime must be after startTime",
+			path: ["endTime"],
+		},
+	);
+
 export const AssignmentValidation = {
 	AssignmentListQuerySchema,
 	RejectAssignmentSchema,
+	ReassignAssignmentSchema,
 };

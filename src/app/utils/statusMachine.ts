@@ -23,7 +23,7 @@ export const serviceRequestMachine: StatusMachine<ServiceRequestStatus> = {
 export const workOrderMachine: StatusMachine<WorkOrderStatus> = {
 	AWAITING_ASSIGNMENT: ["ASSIGNED", "CANCELLED"],
 	ASSIGNED: ["SCHEDULED", "AWAITING_ASSIGNMENT", "CANCELLED"],
-	SCHEDULED: ["ARRIVED", "AWAITING_ASSIGNMENT", "CANCELLED"],
+	SCHEDULED: ["ARRIVED", "AWAITING_ASSIGNMENT", "ASSIGNED", "CANCELLED"],
 	ARRIVED: ["AWAITING_ESTIMATE_APPROVAL", "CANCELLED"],
 	AWAITING_ESTIMATE_APPROVAL: [
 		"ESTIMATE_APPROVED",
@@ -41,7 +41,7 @@ export const workOrderMachine: StatusMachine<WorkOrderStatus> = {
 
 export const assignmentMachine: StatusMachine<AssignmentStatus> = {
 	PENDING: ["ACCEPTED", "REJECTED", "CANCELLED"],
-	ACCEPTED: ["CANCELLED"],
+	ACCEPTED: ["PENDING", "CANCELLED"],
 	REJECTED: ["PENDING"],
 	CANCELLED: [],
 };

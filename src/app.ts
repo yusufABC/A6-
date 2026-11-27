@@ -5,6 +5,7 @@ import httpStatus from "http-status";
 import config from "./app/config";
 import { globalErrorHandler } from "./app/middleware/globalErrorHandler";
 import { notFound } from "./app/middleware/notFound";
+import { AppointmentRoutes } from "./app/module/appointment/appointment.route";
 import { AssignmentRoutes } from "./app/module/assignment/assignment.route";
 import { AuthRoutes } from "./app/module/auth/auth.route";
 import { ServiceRequestRoutes } from "./app/module/service-request/service-request.route";
@@ -38,6 +39,7 @@ app.use("/api/v1/technician-applications", TechnicianApplicationRoutes);
 app.use("/api/v1/technicians", TechnicianRoutes);
 app.use("/api/v1/work-orders", WorkOrderRoutes);
 app.use("/api/v1/assignments", AssignmentRoutes);
+app.use("/api/v1/appointments", AppointmentRoutes);
 
 // Basic route
 app.get("/", async (req: Request, res: Response) => {

@@ -95,9 +95,30 @@ const rejectAssignment = catchAsync(async (req: Request, res: Response) => {
 	});
 });
 
+const reassignAssignment = catchAsync(async (req: Request, res: Response) => {
+	const user = req.user;
+	if (!user) {
+		throw new AppError(httpStatus.UNAUTHORIZED, "You are not logged in");
+	}
+
+	const result = await AssignmentServices.reassignAssignment(
+		req.params.id as string,
+		req.body,
+		user.userId,
+	);
+
+	sendResponse(res, {
+		statusCode: httpStatus.OK,
+		success: true,
+		message: "Assignment reassigned successfully",
+		data: result,
+	});
+});
+
 export const AssignmentController = {
 	getAssignments,
 	getAssignmentById,
 	acceptAssignment,
 	rejectAssignment,
+	reassignAssignment,
 };
