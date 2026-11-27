@@ -1,0 +1,371 @@
+{
+  "info": {
+    "_postman_id": "8f6f2f1e-11f2-4a3b-9a1e-7d6c5b4a3210",
+    "name": "FSMS - Feature 11 Technician Application (Customer)",
+    "description": "Tests POST /api/v1/technician-applications, GET /api/v1/technician-applications/me and DELETE /api/v1/technician-applications/:id. Set customerEmail/customerPassword and technicianEmail/technicianPassword from your .env before running. In every request that has a resume file field, click the field and select a JPEG/PNG/PDF file (max 5 MB).",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:5000" },
+    { "key": "customerEmail", "value": "customer@example.com" },
+    { "key": "customerPassword", "value": "change-me" },
+    { "key": "technicianEmail", "value": "technician@example.com" },
+    { "key": "technicianPassword", "value": "change-me" },
+    { "key": "customerToken", "value": "" },
+    { "key": "technicianToken", "value": "" },
+    { "key": "applicationId", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "01 - Login Customer",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+              "var body = pm.response.json();",
+              "pm.test('customer accessToken returned', function () { pm.expect(body.data.accessToken).to.be.a('string').and.not.empty; });",
+              "pm.collectionVariables.set('customerToken', body.data.accessToken);"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"{{customerEmail}}\",\n  \"password\": \"{{customerPassword}}\"\n}",
+          "options": { "raw": { "language": "json" } }
+        },
+        "url": "{{baseUrl}}/api/v1/auth/login"
+      }
+    },
+    {
+      "name": "02 - Login Technician",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+              "var body = pm.response.json();",
+              "pm.test('technician accessToken returned', function () { pm.expect(body.data.accessToken).to.be.a('string').and.not.empty; });",
+              "pm.collectionVariables.set('technicianToken', body.data.accessToken);"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"{{technicianEmail}}\",\n  \"password\": \"{{technicianPassword}}\"\n}",
+          "options": { "raw": { "language": "json" } }
+        },
+        "url": "{{baseUrl}}/api/v1/auth/login"
+      }
+    },
+    {
+      "name": "03 - Create Application (customer)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('201 Created', function () { pm.response.to.have.status(201); });",
+              "var body = pm.response.json();",
+              "pm.test('status is PENDING', function () { pm.expect(body.data.status).to.eql('PENDING'); });",
+              "pm.test('resume url stored', function () { pm.expect(body.data.resume).to.be.a('string').and.not.empty; });",
+              "pm.collectionVariables.set('applicationId', body.data.id);"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Authorization", "value": "Bearer {{customerToken}}" }],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            { "key": "resume", "type": "file", "src": [] },
+            { "key": "additionalFiles", "type": "file", "src": [] },
+            { "key": "data", "type": "text", "value": "{\"professionalTitle\":\"Refrigeration Technician\",\"yearsOfExperience\":4,\"bio\":\"Certified AC and refrigeration technician.\",\"skills\":[\"Refrigeration\",\"AC Repair\"],\"serviceAreas\":[\"Dhaka\",\"Gazipur\"],\"workingDays\":{\"sun\":true,\"mon\":true,\"tue\":true,\"wed\":true,\"thu\":true,\"fri\":false,\"sat\":true},\"preferredHours\":\"09:00-18:00\"}" }
+          ]
+        },
+        "url": "{{baseUrl}}/api/v1/technician-applications"
+      }
+    },
+    {
+      "name": "04 - Create Application Duplicate (expect 409)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('409 Conflict', function () { pm.response.to.have.status(409); });",
+              "pm.test('duplicate message', function () { pm.expect(pm.response.json().message).to.match(/pending technician application/i); });"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Authorization", "value": "Bearer {{customerToken}}" }],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            { "key": "resume", "type": "file", "src": [] },
+            { "key": "data", "type": "text", "value": "{\"professionalTitle\":\"Refrigeration Technician\",\"yearsOfExperience\":4,\"skills\":[\"Refrigeration\"],\"serviceAreas\":[\"Dhaka\"]}" }
+          ]
+        },
+        "url": "{{baseUrl}}/api/v1/technician-applications"
+      }
+    },
+    {
+      "name": "05 - Get My Applications",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+              "var body = pm.response.json();",
+              "pm.test('data is an array', function () { pm.expect(body.data).to.be.an('array'); });",
+              "pm.test('contains created application', function () {",
+              "  var id = pm.collectionVariables.get('applicationId');",
+              "  pm.expect(body.data.some(function (a) { return a.id === id; })).to.be.true;",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "Authorization", "value": "Bearer {{customerToken}}" }],
+        "url": "{{baseUrl}}/api/v1/technician-applications/me"
+      }
+    },
+    {
+      "name": "06 - Delete As Technician (expect 403)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('403 Forbidden', function () { pm.response.to.have.status(403); });"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "DELETE",
+        "header": [{ "key": "Authorization", "value": "Bearer {{technicianToken}}" }],
+        "url": "{{baseUrl}}/api/v1/technician-applications/{{applicationId}}"
+      }
+    },
+    {
+      "name": "07 - Withdraw Application (customer)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+              "var body = pm.response.json();",
+              "pm.test('soft deleted', function () {",
+              "  pm.expect(body.data.isDeleted).to.be.true;",
+              "  pm.expect(body.data.deletedAt).to.not.be.null;",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "DELETE",
+        "header": [{ "key": "Authorization", "value": "Bearer {{customerToken}}" }],
+        "url": "{{baseUrl}}/api/v1/technician-applications/{{applicationId}}"
+      }
+    },
+    {
+      "name": "08 - Get My Applications After Withdraw",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+              "var body = pm.response.json();",
+              "pm.test('withdrawn application is hidden', function () {",
+              "  var id = pm.collectionVariables.get('applicationId');",
+              "  pm.expect(body.data.some(function (a) { return a.id === id; })).to.be.false;",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "Authorization", "value": "Bearer {{customerToken}}" }],
+        "url": "{{baseUrl}}/api/v1/technician-applications/me"
+      }
+    },
+    {
+      "name": "09 - Create As Technician (expect 403)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('403 Forbidden', function () { pm.response.to.have.status(403); });"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Authorization", "value": "Bearer {{technicianToken}}" }],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            { "key": "resume", "type": "file", "src": [] },
+            { "key": "data", "type": "text", "value": "{\"professionalTitle\":\"Refrigeration Technician\",\"yearsOfExperience\":4,\"skills\":[\"Refrigeration\"],\"serviceAreas\":[\"Dhaka\"]}" }
+          ]
+        },
+        "url": "{{baseUrl}}/api/v1/technician-applications"
+      }
+    },
+    {
+      "name": "10 - Create Without Resume (expect 400)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('400 Bad Request', function () { pm.response.to.have.status(400); });",
+              "pm.test('resume required message', function () { pm.expect(pm.response.json().message).to.match(/resume file is required/i); });"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Authorization", "value": "Bearer {{customerToken}}" }],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            { "key": "data", "type": "text", "value": "{\"professionalTitle\":\"Refrigeration Technician\",\"yearsOfExperience\":4,\"skills\":[\"Refrigeration\"],\"serviceAreas\":[\"Dhaka\"]}" }
+          ]
+        },
+        "url": "{{baseUrl}}/api/v1/technician-applications"
+      }
+    },
+    {
+      "name": "11 - Invalid data JSON (expect 400)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('400 Bad Request', function () { pm.response.to.have.status(400); });"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Authorization", "value": "Bearer {{customerToken}}" }],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            { "key": "data", "type": "text", "value": "{\"professionalTitle\":" }
+          ]
+        },
+        "url": "{{baseUrl}}/api/v1/technician-applications"
+      }
+    },
+    {
+      "name": "12 - Invalid Payload - empty skills (expect 400)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('400 Bad Request', function () { pm.response.to.have.status(400); });"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Authorization", "value": "Bearer {{customerToken}}" }],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            { "key": "resume", "type": "file", "src": [] },
+            { "key": "data", "type": "text", "value": "{\"professionalTitle\":\"Refrigeration Technician\",\"yearsOfExperience\":4,\"skills\":[],\"serviceAreas\":[\"Dhaka\"]}" }
+          ]
+        },
+        "url": "{{baseUrl}}/api/v1/technician-applications"
+      }
+    },
+    {
+      "name": "13 - Invalid File Type (expect 400)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('400 Bad Request', function () { pm.response.to.have.status(400); });"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Authorization", "value": "Bearer {{customerToken}}" }],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            { "key": "resume", "type": "file", "src": [] },
+            { "key": "data", "type": "text", "value": "{\"professionalTitle\":\"Refrigeration Technician\",\"yearsOfExperience\":4,\"skills\":[\"Refrigeration\"],\"serviceAreas\":[\"Dhaka\"]}" }
+          ]
+        },
+        "url": "{{baseUrl}}/api/v1/technician-applications"
+      }
+    },
+    {
+      "name": "14 - Get My Applications Without Token (expect 401)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('401 Unauthorized', function () { pm.response.to.have.status(401); });"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/api/v1/technician-applications/me"
+      }
+    }
+  ]
+}
