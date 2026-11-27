@@ -1,3 +1,5 @@
+import type { TechnicianApplicationStatus } from "../../../generated/prisma/enums";
+
 export interface IAdditionalFile {
 	url: string;
 	publicId: string;
@@ -26,4 +28,28 @@ export interface ICreateTechnicianApplicationPayload {
 export interface ITechnicianApplicationFiles {
 	resume?: Express.Multer.File[];
 	additionalFiles?: Express.Multer.File[];
+}
+
+export type TechnicianApplicationSortField =
+	| "status"
+	| "professionalTitle"
+	| "yearsOfExperience"
+	| "createdAt"
+	| "updatedAt";
+
+export interface ITechnicianApplicationListQuery {
+	page: number;
+	limit: number;
+	searchTerm?: string;
+	status?: TechnicianApplicationStatus;
+	sortBy: TechnicianApplicationSortField;
+	sortOrder: "asc" | "desc";
+}
+
+export interface IApproveTechnicianApplicationPayload {
+	reviewNote?: string;
+}
+
+export interface IRejectTechnicianApplicationPayload {
+	reviewNote: string;
 }

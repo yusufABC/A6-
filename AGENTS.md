@@ -7,4 +7,4 @@ Read @skills/SKILL.md, @requirement-analysis.md and @database_model_relations.md
 This is an FSMS (Field Service Management System) backend.
 Always follow the conventions and domain rules in that file exactly.
 Never implement more than what is explicitly requested.
-Plan first (list files you will create/modify), then implement, then stop.If something is missing or unclear (e.g. a notification category), ask me. Do not guess.
+Plan first (list files you will create/modify), then implement, then stop.If something is missing or unclear (e.g. a notification category), ask me. Do not guess. And create a file in .json after build for postman testing with proper instruction for this feature copy and paste into postman

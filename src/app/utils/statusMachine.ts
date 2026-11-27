@@ -4,6 +4,7 @@ import type {
 	EstimateStatus,
 	PaymentStatus,
 	ServiceRequestStatus,
+	TechnicianApplicationStatus,
 	WorkOrderStatus,
 } from "../../generated/prisma/enums";
 import { AppError } from "./AppError";
@@ -66,6 +67,13 @@ export const appointmentMachine: StatusMachine<AppointmentStatus> = {
 	CANCELLED: [],
 };
 
+export const technicianApplicationMachine: StatusMachine<TechnicianApplicationStatus> =
+	{
+		PENDING: ["APPROVED", "REJECTED"],
+		APPROVED: [],
+		REJECTED: [],
+	};
+
 export const statusMachines = {
 	serviceRequest: serviceRequestMachine,
 	workOrder: workOrderMachine,
@@ -73,6 +81,7 @@ export const statusMachines = {
 	estimate: estimateMachine,
 	payment: paymentMachine,
 	appointment: appointmentMachine,
+	technicianApplication: technicianApplicationMachine,
 } as const;
 
 export const assertTransition = <S extends string>(

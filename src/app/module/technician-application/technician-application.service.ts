@@ -1,15 +1,31 @@
 import httpStatus from "http-status";
 import type { Prisma } from "../../../generated/prisma/client";
-import { TechnicianApplicationStatus } from "../../../generated/prisma/enums";
+import {
+	Role,
+	TechnicianApplicationStatus,
+	UserStatus,
+} from "../../../generated/prisma/enums";
+import type {
+	TechnicianApplicationOrderByWithRelationInput,
+	TechnicianApplicationWhereInput,
+} from "../../../generated/prisma/models";
 import { cloudinary } from "../../lib/cloudinary";
 import { prisma } from "../../lib/prisma";
 import { uploadToCloudinary } from "../../lib/uploadImage";
 import { AppError } from "../../utils/AppError";
 import { AuditAction, createAuditLog } from "../../utils/auditLog";
+import { buildPaginationMeta, getPagination } from "../../utils/pagination";
+import {
+	assertTransition,
+	technicianApplicationMachine,
+} from "../../utils/statusMachine";
 import type {
 	IAdditionalFile,
+	IApproveTechnicianApplicationPayload,
 	ICreateTechnicianApplicationPayload,
+	IRejectTechnicianApplicationPayload,
 	ITechnicianApplicationFiles,
+	ITechnicianApplicationListQuery,
 } from "./technician-application.interface";
 
 const APPLICATION_FOLDER = "fsms/applications";
@@ -198,8 +214,234 @@ const deleteTechnicianApplication = async (id: string, actorUserId: string) => {
 	});
 };
 
+const getTechnicianApplications = async (
+	query: ITechnicianApplicationListQuery,
+) => {
+	const { page, limit, skip } = getPagination(query);
+
+	const andConditions: TechnicianApplicationWhereInput[] = [
+		{ isDeleted: false },
+	];
+
+	if (query.status) {
+		andConditions.push({ status: query.status });
+	}
+
+	if (query.searchTerm) {
+		const searchTerm = query.searchTerm;
+		andConditions.push({
+			OR: [
+				{
+					professionalTitle: { contains: searchTerm, mode: "insensitive" },
+				},
+				{ user: { name: { contains: searchTerm, mode: "insensitive" } } },
+				{ user: { email: { contains: searchTerm, mode: "insensitive" } } },
+			],
+		});
+	}
+
+	const where: TechnicianApplicationWhereInput = { AND: andConditions };
+
+	const data = await prisma.technicianApplication.findMany({
+		where,
+		take: limit,
+		skip,
+		orderBy: {
+			[query.sortBy]: query.sortOrder,
+		} as TechnicianApplicationOrderByWithRelationInput,
+		include: {
+			user: {
+				select: {
+					id: true,
+					name: true,
+					email: true,
+					phone: true,
+					imageUrl: true,
+					role: true,
+					status: true,
+				},
+			},
+		},
+	});
+
+	const total = await prisma.technicianApplication.count({ where });
+
+	return {
+		data,
+		meta: buildPaginationMeta(page, limit, total),
+	};
+};
+
+const approveTechnicianApplication = async (
+	id: string,
+	actorUserId: string,
+	payload: IApproveTechnicianApplicationPayload,
+) => {
+	return prisma.$transaction(async (tx) => {
+		const lockedApplications = await tx.$queryRaw<
+			{
+				id: string;
+				status: TechnicianApplicationStatus;
+				userId: string;
+			}[]
+		>`
+			SELECT id, status, "userId" FROM technician_applications
+			WHERE id = ${id} AND "isDeleted" = false
+			FOR UPDATE
+		`;
+
+		if (lockedApplications.length === 0) {
+			throw new AppError(
+				httpStatus.NOT_FOUND,
+				"Technician application not found",
+			);
+		}
+
+		assertTransition(
+			technicianApplicationMachine,
+			lockedApplications[0].status,
+			TechnicianApplicationStatus.APPROVED,
+		);
+
+		const application = await tx.technicianApplication.findUnique({
+			where: { id },
+		});
+
+		if (!application) {
+			throw new AppError(
+				httpStatus.NOT_FOUND,
+				"Technician application not found",
+			);
+		}
+
+		const user = await tx.user.findUnique({
+			where: { id: application.userId },
+		});
+
+		if (!user || user.isDeleted || user.status === UserStatus.DELETED) {
+			throw new AppError(httpStatus.NOT_FOUND, "Applicant not found");
+		}
+
+		const existingProfile = await tx.technicianProfile.findUnique({
+			where: { userId: application.userId },
+		});
+
+		const updatedApplication = await tx.technicianApplication.update({
+			where: { id: application.id },
+			data: {
+				status: TechnicianApplicationStatus.APPROVED,
+				reviewedBy: actorUserId,
+				reviewedAt: new Date(),
+				reviewNote: payload.reviewNote ?? null,
+			},
+		});
+
+		await tx.user.update({
+			where: { id: application.userId },
+			data: { role: Role.TECHNICIAN },
+		});
+
+		let technicianProfile = existingProfile;
+		if (!technicianProfile) {
+			technicianProfile = await tx.technicianProfile.create({
+				data: {
+					userId: application.userId,
+					professionalTitle: application.professionalTitle,
+					yearsOfExperience: application.yearsOfExperience,
+					bio: application.bio,
+					skills:
+						application.skills === null
+							? undefined
+							: (application.skills as Prisma.InputJsonValue),
+					serviceAreas:
+						application.serviceAreas === null
+							? undefined
+							: (application.serviceAreas as Prisma.InputJsonValue),
+					workingDays:
+						application.workingDays === null
+							? undefined
+							: (application.workingDays as Prisma.InputJsonValue),
+					preferredHours: application.preferredHours,
+				},
+			});
+		}
+
+		await createAuditLog(tx, {
+			userId: actorUserId,
+			action: AuditAction.TECHNICIAN_APPROVED,
+			entityType: "TechnicianApplication",
+			entityId: application.id,
+			metadata: payload.reviewNote
+				? { reviewNote: payload.reviewNote }
+				: undefined,
+		});
+
+		await createAuditLog(tx, {
+			userId: actorUserId,
+			action: AuditAction.USER_ROLE_UPDATED,
+			entityType: "User",
+			entityId: application.userId,
+			metadata: { oldRole: user.role, newRole: Role.TECHNICIAN },
+		});
+
+		return { application: updatedApplication, technicianProfile };
+	});
+};
+
+const rejectTechnicianApplication = async (
+	id: string,
+	actorUserId: string,
+	payload: IRejectTechnicianApplicationPayload,
+) => {
+	return prisma.$transaction(async (tx) => {
+		const lockedApplications = await tx.$queryRaw<
+			{ id: string; status: TechnicianApplicationStatus }[]
+		>`
+			SELECT id, status FROM technician_applications
+			WHERE id = ${id} AND "isDeleted" = false
+			FOR UPDATE
+		`;
+
+		if (lockedApplications.length === 0) {
+			throw new AppError(
+				httpStatus.NOT_FOUND,
+				"Technician application not found",
+			);
+		}
+
+		assertTransition(
+			technicianApplicationMachine,
+			lockedApplications[0].status,
+			TechnicianApplicationStatus.REJECTED,
+		);
+
+		const updatedApplication = await tx.technicianApplication.update({
+			where: { id },
+			data: {
+				status: TechnicianApplicationStatus.REJECTED,
+				reviewedBy: actorUserId,
+				reviewedAt: new Date(),
+				reviewNote: payload.reviewNote,
+			},
+		});
+
+		await createAuditLog(tx, {
+			userId: actorUserId,
+			action: AuditAction.TECHNICIAN_REJECTED,
+			entityType: "TechnicianApplication",
+			entityId: id,
+			metadata: { reviewNote: payload.reviewNote },
+		});
+
+		return updatedApplication;
+	});
+};
+
 export const TechnicianApplicationServices = {
 	createTechnicianApplication,
 	getMyApplications,
 	deleteTechnicianApplication,
+	getTechnicianApplications,
+	approveTechnicianApplication,
+	rejectTechnicianApplication,
 };

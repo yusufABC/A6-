@@ -109,8 +109,86 @@ const deleteTechnicianApplication = catchAsync(
 	},
 );
 
+const getTechnicianApplications = catchAsync(
+	async (req: Request, res: Response) => {
+		const parsedQuery =
+			TechnicianApplicationValidation.TechnicianApplicationListQuerySchema.safeParse(
+				req.query,
+			);
+
+		if (!parsedQuery.success) {
+			throw new AppError(
+				httpStatus.BAD_REQUEST,
+				parsedQuery.error.issues[0]?.message ?? "Invalid query parameters",
+			);
+		}
+
+		const { data, meta } =
+			await TechnicianApplicationServices.getTechnicianApplications(
+				parsedQuery.data,
+			);
+
+		sendResponse(res, {
+			statusCode: httpStatus.OK,
+			success: true,
+			message: "Technician applications retrieved successfully",
+			data,
+			meta,
+		});
+	},
+);
+
+const approveTechnicianApplication = catchAsync(
+	async (req: Request, res: Response) => {
+		const user = req.user;
+		if (!user) {
+			throw new AppError(httpStatus.UNAUTHORIZED, "You are not logged in");
+		}
+
+		const result =
+			await TechnicianApplicationServices.approveTechnicianApplication(
+				req.params.id as string,
+				user.userId,
+				req.body,
+			);
+
+		sendResponse(res, {
+			statusCode: httpStatus.OK,
+			success: true,
+			message: "Technician application approved successfully",
+			data: result,
+		});
+	},
+);
+
+const rejectTechnicianApplication = catchAsync(
+	async (req: Request, res: Response) => {
+		const user = req.user;
+		if (!user) {
+			throw new AppError(httpStatus.UNAUTHORIZED, "You are not logged in");
+		}
+
+		const result =
+			await TechnicianApplicationServices.rejectTechnicianApplication(
+				req.params.id as string,
+				user.userId,
+				req.body,
+			);
+
+		sendResponse(res, {
+			statusCode: httpStatus.OK,
+			success: true,
+			message: "Technician application rejected successfully",
+			data: result,
+		});
+	},
+);
+
 export const TechnicianApplicationController = {
 	createTechnicianApplication,
 	getMyApplications,
 	deleteTechnicianApplication,
+	getTechnicianApplications,
+	approveTechnicianApplication,
+	rejectTechnicianApplication,
 };

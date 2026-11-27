@@ -48,6 +48,49 @@ const CreateTechnicianApplicationSchema = z
 	})
 	.strict();
 
+const TechnicianApplicationListQuerySchema = z.object({
+	page: z.coerce.number().int().positive().default(1),
+	limit: z.coerce.number().int().positive().max(100).default(10),
+	searchTerm: z.string().trim().optional(),
+	status: z.enum(["PENDING", "APPROVED", "REJECTED"]).optional(),
+	sortBy: z
+		.enum([
+			"status",
+			"professionalTitle",
+			"yearsOfExperience",
+			"createdAt",
+			"updatedAt",
+		])
+		.default("createdAt"),
+	sortOrder: z.enum(["asc", "desc"]).default("desc"),
+});
+
+const ApproveTechnicianApplicationSchema = z.preprocess(
+	(value) => value ?? {},
+	z
+		.object({
+			reviewNote: z
+				.string()
+				.trim()
+				.max(1000, "Review note must be at most 1000 characters")
+				.optional(),
+		})
+		.strict(),
+);
+
+const RejectTechnicianApplicationSchema = z
+	.object({
+		reviewNote: z
+			.string()
+			.trim()
+			.min(1, "Review note is required")
+			.max(1000, "Review note must be at most 1000 characters"),
+	})
+	.strict();
+
 export const TechnicianApplicationValidation = {
 	CreateTechnicianApplicationSchema,
+	TechnicianApplicationListQuerySchema,
+	ApproveTechnicianApplicationSchema,
+	RejectTechnicianApplicationSchema,
 };
