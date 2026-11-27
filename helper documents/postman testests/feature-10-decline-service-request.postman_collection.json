@@ -1,0 +1,873 @@
+{
+  "info": {
+    "name": "FSMS - Feature 10 - Decline Service Request",
+    "description": "Feature 10 tests: POST /api/v1/service-requests/:id/decline (roles MANAGER and ADMIN, body: reason).\n\nWHAT THIS ENDPOINT DOES\n- Guards, in order: request exists -> requester is not the customer on the request -> status transition PENDING_REVIEW -> DECLINED is legal.\n- reason is required and validated by zod (trimmed, 1..500 chars, no unknown fields).\n- In ONE transaction: sets ServiceRequest.status = DECLINED and writes AuditLog action REQUEST_DECLINED with metadata { reason }.\n- No WorkOrder is created. There is no declineReason column on ServiceRequest.\n\nBEFORE RUNNING - set these collection variables:\n- baseUrl (default http://localhost:5000)\n- customerToken, technicianToken, managerToken, adminToken (raw JWT values, no 'Bearer ' prefix)\n- serviceId (an active service id whose customer has a complete address)\n- managerOwnRequestId (optional: a request whose customerId equals the manager's userId)\n- adminOwnRequestId (optional: a request whose customerId equals the admin's userId)\n\nHOW TO RUN\n1. Run the 'Setup' folder. It creates fresh PENDING_REVIEW requests as the customer and stores their ids.\n2. Run the 'Decline' folder in order. It covers manager/admin happy paths, missing/empty/unknown reason 400s, repeat-decline 400, invalid-transition 400, 401, wrong-role 403s and 404.\n3. Run the 'Verify' folder to confirm ServiceRequest = DECLINED and no WorkOrder was created.\n4. The 'Self-decline guard' folder only works if you prepare managerOwnRequestId/adminOwnRequestId (see that folder's description).\n\nDB CHECKS (run after declining a request, replacing <REQUEST_ID>):\n  SELECT id, status FROM service_requests WHERE id = '<REQUEST_ID>';\n  SELECT id, status, \"serviceRequestId\" FROM work_orders WHERE \"serviceRequestId\" = '<REQUEST_ID>';\n  SELECT action, \"entityType\", \"entityId\", \"userId\", metadata, \"createdAt\" FROM audit_logs WHERE \"entityId\" = '<REQUEST_ID>' AND action = 'REQUEST_DECLINED';\nExpected: request DECLINED, ZERO work order rows, exactly one REQUEST_DECLINED audit row whose metadata is {\"reason\":\"...\"}.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:5000" },
+    { "key": "customerToken", "value": "" },
+    { "key": "technicianToken", "value": "" },
+    { "key": "managerToken", "value": "" },
+    { "key": "adminToken", "value": "" },
+    { "key": "serviceId", "value": "" },
+    { "key": "reasonText", "value": "Duplicate request - already serviced under ticket 4412" },
+    { "key": "managerDeclineRequestId", "value": "" },
+    { "key": "adminDeclineRequestId", "value": "" },
+    { "key": "missingReasonRequestId", "value": "" },
+    { "key": "repeatDeclineRequestId", "value": "" },
+    { "key": "invalidTransitionRequestId", "value": "" },
+    { "key": "noTokenRequestId", "value": "" },
+    { "key": "managerOwnRequestId", "value": "" },
+    { "key": "adminOwnRequestId", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "Setup (run first)",
+      "item": [
+        {
+          "name": "Create request (manager will decline)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{customerToken}}" }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "serviceId", "value": "{{serviceId}}", "type": "text" },
+                { "key": "description", "value": "Feature 10 setup - manager decline happy path", "type": "text" }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/service-requests",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "service-requests"]
+            },
+            "description": "Uses the existing Feature 7 create endpoint. Requires customerToken to be a CUSTOMER with a complete address. Stores managerDeclineRequestId."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "const json = pm.response.json();",
+                  "pm.test('success is true', () => pm.expect(json.success).to.eql(true));",
+                  "pm.test('starts as PENDING_REVIEW', () => pm.expect(json.data.status).to.eql('PENDING_REVIEW'));",
+                  "if (json && json.data && json.data.id) {",
+                  "  pm.collectionVariables.set('managerDeclineRequestId', json.data.id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create request (admin will decline)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{customerToken}}" }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "serviceId", "value": "{{serviceId}}", "type": "text" },
+                { "key": "description", "value": "Feature 10 setup - admin decline happy path", "type": "text" }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/service-requests",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "service-requests"]
+            },
+            "description": "Uses the existing Feature 7 create endpoint. Stores adminDeclineRequestId."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "const json = pm.response.json();",
+                  "pm.test('success is true', () => pm.expect(json.success).to.eql(true));",
+                  "if (json && json.data && json.data.id) {",
+                  "  pm.collectionVariables.set('adminDeclineRequestId', json.data.id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create request (missing reason test)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{customerToken}}" }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "serviceId", "value": "{{serviceId}}", "type": "text" },
+                { "key": "description", "value": "Feature 10 setup - decline without reason must fail", "type": "text" }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/service-requests",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "service-requests"]
+            },
+            "description": "Uses the existing Feature 7 create endpoint. Stores missingReasonRequestId. It stays PENDING_REVIEW because the decline request is rejected by validation."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "const json = pm.response.json();",
+                  "if (json && json.data && json.data.id) {",
+                  "  pm.collectionVariables.set('missingReasonRequestId', json.data.id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create request (repeat decline test)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{customerToken}}" }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "serviceId", "value": "{{serviceId}}", "type": "text" },
+                { "key": "description", "value": "Feature 10 setup - repeat decline must fail", "type": "text" }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/service-requests",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "service-requests"]
+            },
+            "description": "Uses the existing Feature 7 create endpoint. Stores repeatDeclineRequestId. It is declined once, then declined again to prove the 400 transition guard."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "const json = pm.response.json();",
+                  "if (json && json.data && json.data.id) {",
+                  "  pm.collectionVariables.set('repeatDeclineRequestId', json.data.id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create request (invalid transition test)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{customerToken}}" }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "serviceId", "value": "{{serviceId}}", "type": "text" },
+                { "key": "description", "value": "Feature 10 setup - decline after approve must fail", "type": "text" }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/service-requests",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "service-requests"]
+            },
+            "description": "Uses the existing Feature 7 create endpoint. Stores invalidTransitionRequestId. It is approved first, then decline must be rejected because APPROVED -> DECLINED is illegal."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "const json = pm.response.json();",
+                  "if (json && json.data && json.data.id) {",
+                  "  pm.collectionVariables.set('invalidTransitionRequestId', json.data.id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create request (no token test)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{customerToken}}" }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "serviceId", "value": "{{serviceId}}", "type": "text" },
+                { "key": "description", "value": "Feature 10 setup - decline without token must fail", "type": "text" }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/service-requests",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "service-requests"]
+            },
+            "description": "Uses the existing Feature 7 create endpoint. Stores noTokenRequestId."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "const json = pm.response.json();",
+                  "if (json && json.data && json.data.id) {",
+                  "  pm.collectionVariables.set('noTokenRequestId', json.data.id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Decline - POST /service-requests/:id/decline",
+      "item": [
+        {
+          "name": "Manager declines PENDING_REVIEW request (expect 200)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{managerToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"reason\":\"{{reasonText}}\"}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/service-requests/{{managerDeclineRequestId}}/decline",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "service-requests", "{{managerDeclineRequestId}}", "decline"]
+            },
+            "description": "Happy path for MANAGER. Expects 200, request DECLINED and no workOrder in the response."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.test('success is true', () => pm.expect(json.success).to.eql(true));",
+                  "pm.test('message is the decline message', () => pm.expect(json.message).to.eql('Service request declined successfully'));",
+                  "pm.test('request status is DECLINED', () => pm.expect(json.data.status).to.eql('DECLINED'));",
+                  "pm.test('no workOrder was created', () => pm.expect(json.data.workOrder).to.be.undefined);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Admin declines PENDING_REVIEW request (expect 200)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{adminToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"reason\":\"Declined by admin after duplicate check\"}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/service-requests/{{adminDeclineRequestId}}/decline",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "service-requests", "{{adminDeclineRequestId}}", "decline"]
+            },
+            "description": "Happy path for ADMIN. Same expected shape as the manager happy path."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.test('success is true', () => pm.expect(json.success).to.eql(true));",
+                  "pm.test('request status is DECLINED', () => pm.expect(json.data.status).to.eql('DECLINED'));",
+                  "pm.test('no workOrder was created', () => pm.expect(json.data.workOrder).to.be.undefined);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Decline without reason (expect 400)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{managerToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/service-requests/{{missingReasonRequestId}}/decline",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "service-requests", "{{missingReasonRequestId}}", "decline"]
+            },
+            "description": "zod must reject a missing reason before the controller runs. Expect 400 'Reason is required' and the request must stay PENDING_REVIEW."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 Bad Request', () => pm.response.to.have.status(400));",
+                  "const json = pm.response.json();",
+                  "pm.test('success is false', () => pm.expect(json.success).to.eql(false));",
+                  "pm.test('message is Reason is required', () => pm.expect(json.message).to.eql('Reason is required'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Decline with blank reason (expect 400)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{managerToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"reason\":\"   \"}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/service-requests/{{missingReasonRequestId}}/decline",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "service-requests", "{{missingReasonRequestId}}", "decline"]
+            },
+            "description": "A whitespace-only reason is trimmed to an empty string and must fail with 400 'Reason is required'."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 Bad Request', () => pm.response.to.have.status(400));",
+                  "const json = pm.response.json();",
+                  "pm.test('success is false', () => pm.expect(json.success).to.eql(false));",
+                  "pm.test('message is Reason is required', () => pm.expect(json.message).to.eql('Reason is required'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Decline with unknown field (expect 400)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{managerToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"reason\":\"Valid reason\",\"declineReason\":\"should be rejected\"}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/service-requests/{{missingReasonRequestId}}/decline",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "service-requests", "{{missingReasonRequestId}}", "decline"]
+            },
+            "description": "The schema is strict and there is no declineReason column. An unknown key must be rejected with 400."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 Bad Request', () => pm.response.to.have.status(400));",
+                  "const json = pm.response.json();",
+                  "pm.test('success is false', () => pm.expect(json.success).to.eql(false));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Decline repeat-test request once (expect 200)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{managerToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"reason\":\"First decline for the repeat test\"}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/service-requests/{{repeatDeclineRequestId}}/decline",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "service-requests", "{{repeatDeclineRequestId}}", "decline"]
+            },
+            "description": "First decline of repeatDeclineRequestId. Must succeed so the next request can prove the transition guard."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.test('request status is DECLINED', () => pm.expect(json.data.status).to.eql('DECLINED'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Decline the same request again (expect 400)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{managerToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"reason\":\"Second decline must fail\"}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/service-requests/{{repeatDeclineRequestId}}/decline",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "service-requests", "{{repeatDeclineRequestId}}", "decline"]
+            },
+            "description": "The request is already DECLINED. assertTransition must reject DECLINED -> DECLINED with 400 'Invalid status transition'."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 Bad Request', () => pm.response.to.have.status(400));",
+                  "const json = pm.response.json();",
+                  "pm.test('success is false', () => pm.expect(json.success).to.eql(false));",
+                  "pm.test('message is Invalid status transition', () => pm.expect(json.message).to.eql('Invalid status transition'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Approve request for invalid-transition test (expect 200)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{managerToken}}" }
+            ],
+            "body": { "mode": "none" },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/service-requests/{{invalidTransitionRequestId}}/approve",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "service-requests", "{{invalidTransitionRequestId}}", "approve"]
+            },
+            "description": "Uses the existing Feature 9 approve endpoint to move the request out of PENDING_REVIEW."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.test('request status is APPROVED', () => pm.expect(json.data.status).to.eql('APPROVED'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Decline an APPROVED request (expect 400)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{managerToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"reason\":\"Decline after approve must fail\"}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/service-requests/{{invalidTransitionRequestId}}/decline",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "service-requests", "{{invalidTransitionRequestId}}", "decline"]
+            },
+            "description": "Only PENDING_REVIEW -> DECLINED is legal. APPROVED -> DECLINED must return 400 'Invalid status transition'."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 Bad Request', () => pm.response.to.have.status(400));",
+                  "const json = pm.response.json();",
+                  "pm.test('success is false', () => pm.expect(json.success).to.eql(false));",
+                  "pm.test('message is Invalid status transition', () => pm.expect(json.message).to.eql('Invalid status transition'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Decline without token (expect 401)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"reason\":\"No token should be rejected\"}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/service-requests/{{noTokenRequestId}}/decline",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "service-requests", "{{noTokenRequestId}}", "decline"]
+            },
+            "description": "auth() must reject a missing token before the controller runs."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401 Unauthorized', () => pm.response.to.have.status(401));",
+                  "const json = pm.response.json();",
+                  "pm.test('success is false', () => pm.expect(json.success).to.eql(false));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Decline as customer (expect 403)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{customerToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"reason\":\"Customer must not be able to decline\"}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/service-requests/{{missingReasonRequestId}}/decline",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "service-requests", "{{missingReasonRequestId}}", "decline"]
+            },
+            "description": "Only MANAGER and ADMIN are allowed. A CUSTOMER token must get 403 at the route guard."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('403 Forbidden', () => pm.response.to.have.status(403));",
+                  "const json = pm.response.json();",
+                  "pm.test('success is false', () => pm.expect(json.success).to.eql(false));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Decline as technician (expect 403)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{technicianToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"reason\":\"Technician must not be able to decline\"}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/service-requests/{{missingReasonRequestId}}/decline",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "service-requests", "{{missingReasonRequestId}}", "decline"]
+            },
+            "description": "A TECHNICIAN token must get 403 at the route guard."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('403 Forbidden', () => pm.response.to.have.status(403));",
+                  "const json = pm.response.json();",
+                  "pm.test('success is false', () => pm.expect(json.success).to.eql(false));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Decline non-existent request (expect 404)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{managerToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"reason\":\"Request does not exist\"}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/service-requests/00000000-0000-0000-0000-000000000000/decline",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "service-requests", "00000000-0000-0000-0000-000000000000", "decline"]
+            },
+            "description": "The existence guard runs first and returns 404 before any status or self-decline check."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('404 Not Found', () => pm.response.to.have.status(404));",
+                  "const json = pm.response.json();",
+                  "pm.test('success is false', () => pm.expect(json.success).to.eql(false));",
+                  "pm.test('message is Service request not found', () => pm.expect(json.message).to.eql('Service request not found'));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Self-decline guard (manual setup required)",
+      "item": [
+        {
+          "name": "Manager declines own request (expect 403)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{managerToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"reason\":\"Manager cannot decline own request\"}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/service-requests/{{managerOwnRequestId}}/decline",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "service-requests", "{{managerOwnRequestId}}", "decline"]
+            },
+            "description": "MANUAL SETUP: create a request while the user is a CUSTOMER, then promote that same user to MANAGER (or seed a request whose customerId equals the manager's userId). Put its id in managerOwnRequestId. Expected: 403 'You cannot decline your own service request'."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('403 Forbidden', () => pm.response.to.have.status(403));",
+                  "const json = pm.response.json();",
+                  "pm.test('success is false', () => pm.expect(json.success).to.eql(false));",
+                  "pm.test('message is the self-decline message', () => pm.expect(json.message).to.eql('You cannot decline your own service request'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Admin declines own request (expect 403)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{adminToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"reason\":\"Admin cannot decline own request\"}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/service-requests/{{adminOwnRequestId}}/decline",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "service-requests", "{{adminOwnRequestId}}", "decline"]
+            },
+            "description": "MANUAL SETUP: same as the manager case, but the request must belong to the admin user. Put its id in adminOwnRequestId. Expected: 403 'You cannot decline your own service request'."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('403 Forbidden', () => pm.response.to.have.status(403));",
+                  "const json = pm.response.json();",
+                  "pm.test('success is false', () => pm.expect(json.success).to.eql(false));",
+                  "pm.test('message is the self-decline message', () => pm.expect(json.message).to.eql('You cannot decline your own service request'));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Verify",
+      "item": [
+        {
+          "name": "Manager-declined request is DECLINED with no work order",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{managerToken}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/service-requests/{{managerDeclineRequestId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "service-requests", "{{managerDeclineRequestId}}"]
+            },
+            "description": "Reads the request back through the existing Feature 8 detail endpoint to prove the status persisted and no work order exists."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.test('request status is DECLINED', () => pm.expect(json.data.status).to.eql('DECLINED'));",
+                  "pm.test('workOrder is null', () => pm.expect(json.data.workOrder).to.eql(null));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Admin-declined request is DECLINED with no work order",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{adminToken}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/service-requests/{{adminDeclineRequestId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "service-requests", "{{adminDeclineRequestId}}"]
+            },
+            "description": "Same persistence check for the admin-declined request."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.test('request status is DECLINED', () => pm.expect(json.data.status).to.eql('DECLINED'));",
+                  "pm.test('workOrder is null', () => pm.expect(json.data.workOrder).to.eql(null));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Customer can see their declined request",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{customerToken}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/service-requests/{{managerDeclineRequestId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "service-requests", "{{managerDeclineRequestId}}"]
+            },
+            "description": "Confirms the decline is visible to the owning customer through the normal ownership-scoped detail endpoint."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.test('request status is DECLINED', () => pm.expect(json.data.status).to.eql('DECLINED'));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

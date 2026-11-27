@@ -34,6 +34,13 @@ router.post(
 );
 
 router.post(
+	"/:id/decline",
+	auth(Role.MANAGER, Role.ADMIN),
+	validateRequest(ServiceRequestValidation.DeclineServiceRequestSchema),
+	ServiceRequestController.declineServiceRequest,
+);
+
+router.post(
 	"/",
 	auth(Role.CUSTOMER),
 	uploadAttachments.array("attachments", 3),

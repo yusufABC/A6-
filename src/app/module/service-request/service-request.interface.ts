@@ -40,3 +40,7 @@ export interface IServiceRequestListQuery {
 export interface ICancelServiceRequestPayload {
 	reason?: string;
 }
+
+export interface IDeclineServiceRequestPayload {
+	reason: string;
+}

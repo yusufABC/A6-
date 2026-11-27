@@ -142,10 +142,33 @@ const approveServiceRequest = catchAsync(
 	},
 );
 
+const declineServiceRequest = catchAsync(
+	async (req: Request, res: Response) => {
+		const user = req.user;
+		if (!user) {
+			throw new AppError(httpStatus.UNAUTHORIZED, "You are not logged in");
+		}
+
+		const result = await ServiceRequestServices.declineServiceRequest(
+			req.params.id as string,
+			user,
+			req.body,
+		);
+
+		sendResponse(res, {
+			statusCode: httpStatus.OK,
+			success: true,
+			message: "Service request declined successfully",
+			data: result,
+		});
+	},
+);
+
 export const ServiceRequestController = {
 	createServiceRequest,
 	getServiceRequests,
 	getServiceRequestById,
 	cancelServiceRequest,
 	approveServiceRequest,
+	declineServiceRequest,
 };

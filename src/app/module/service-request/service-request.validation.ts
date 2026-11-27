@@ -58,8 +58,19 @@ const CancelServiceRequestSchema = z.preprocess(
 		.strict(),
 );
 
+const DeclineServiceRequestSchema = z
+	.object({
+		reason: z
+			.string()
+			.trim()
+			.min(1, "Reason is required")
+			.max(500, "Reason must be at most 500 characters"),
+	})
+	.strict();
+
 export const ServiceRequestValidation = {
 	CreateServiceRequestSchema,
 	ServiceRequestListQuerySchema,
 	CancelServiceRequestSchema,
+	DeclineServiceRequestSchema,
 };

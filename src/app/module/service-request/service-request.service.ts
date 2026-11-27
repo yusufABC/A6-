@@ -23,6 +23,7 @@ import type {
 	IAttachment,
 	ICancelServiceRequestPayload,
 	ICreateServiceRequestPayload,
+	IDeclineServiceRequestPayload,
 	IRequestActor,
 	IServiceRequestListQuery,
 } from "./service-request.interface";
@@ -374,10 +375,55 @@ const approveServiceRequest = async (id: string, actor: IRequestActor) => {
 	});
 };
 
+const declineServiceRequest = async (
+	id: string,
+	actor: IRequestActor,
+	payload: IDeclineServiceRequestPayload,
+) => {
+	const serviceRequest = await prisma.serviceRequest.findFirst({
+		where: { id, isDeleted: false },
+	});
+
+	if (!serviceRequest) {
+		throw new AppError(httpStatus.NOT_FOUND, "Service request not found");
+	}
+
+	if (serviceRequest.customerId === actor.userId) {
+		throw new AppError(
+			httpStatus.FORBIDDEN,
+			"You cannot decline your own service request",
+		);
+	}
+
+	assertTransition(
+		serviceRequestMachine,
+		serviceRequest.status,
+		ServiceRequestStatus.DECLINED,
+	);
+
+	return prisma.$transaction(async (tx) => {
+		const updatedServiceRequest = await tx.serviceRequest.update({
+			where: { id: serviceRequest.id },
+			data: { status: ServiceRequestStatus.DECLINED },
+		});
+
+		await createAuditLog(tx, {
+			userId: actor.userId,
+			action: AuditAction.REQUEST_DECLINED,
+			entityType: "ServiceRequest",
+			entityId: serviceRequest.id,
+			metadata: { reason: payload.reason },
+		});
+
+		return updatedServiceRequest;
+	});
+};
+
 export const ServiceRequestServices = {
 	createServiceRequest,
 	getServiceRequests,
 	getServiceRequestById,
 	cancelServiceRequest,
 	approveServiceRequest,
+	declineServiceRequest,
 };
